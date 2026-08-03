@@ -48,6 +48,7 @@ export {
 	SIDEBAR_PANEL_MAX_ID_CHARS,
 	SIDEBAR_PANEL_MAX_SOURCE_CHARS,
 	SIDEBAR_PANEL_MAX_PANELS,
+	SIDEBAR_PANEL_MAX_TRACKED_SOURCES,
 	isSidebarPanelSource,
 } from "../src/sidebar-panels.js";
 export type {

@@ -22,6 +22,8 @@ export const SIDEBAR_PANEL_MAX_ID_CHARS = 128;
 export const SIDEBAR_PANEL_MAX_SOURCE_CHARS = 128;
 /** Maximum contributed panels retained by one registry. */
 export const SIDEBAR_PANEL_MAX_PANELS = 64;
+/** Maximum distinct event sources tracked by one registry. */
+export const SIDEBAR_PANEL_MAX_TRACKED_SOURCES = SIDEBAR_PANEL_MAX_PANELS;
 
 /** Built-in panels remain available even when their optional content is empty. */
 export const BUILTIN_SIDEBAR_PANEL_IDS = [
@@ -309,21 +311,21 @@ export function createSidebarPanelRegistry(options: SidebarPanelRegistryOptions 
 			// Rendering invalidation is best effort and must not break event handling.
 		}
 	};
-	const acceptRevision = (source: string, revision: number): boolean => {
+	const canAcceptRevision = (source: string, revision: number): boolean => {
 		const previous = revisions.get(source) ?? 0;
-		if (!Number.isSafeInteger(revision) || revision <= previous) return false;
-		revisions.set(source, revision);
-		return true;
+		return Number.isSafeInteger(revision) && revision > previous;
 	};
-	const register = (panel: SidebarPanelContribution, source?: string): boolean => {
-		if (disposed) return false;
-		const safe = sanitizeContribution(panel);
-		if (!safe || !safe.id.includes(":")) return false;
-		const resolvedSource = source ?? sourceFor(safe.id);
-		if (!isSidebarPanelSource(resolvedSource)) return false;
-		const owner = owners.get(safe.id);
-		if (owner && owner !== resolvedSource) return false;
-		if (!panels.has(safe.id) && panels.size >= SIDEBAR_PANEL_MAX_PANELS) return false;
+	const trackRevision = (source: string, revision: number): void => {
+		revisions.set(source, revision);
+	};
+	const canTrackSource = (source: string): boolean =>
+		revisions.has(source) || revisions.size < SIDEBAR_PANEL_MAX_TRACKED_SOURCES;
+	const canRegister = (panel: SidebarPanelContribution, source: string): boolean => {
+		const owner = owners.get(panel.id);
+		if (owner !== undefined && owner !== source) return false;
+		return panels.has(panel.id) || panels.size < SIDEBAR_PANEL_MAX_PANELS;
+	};
+	const applyRegister = (safe: SidebarPanelContribution, resolvedSource: string): boolean => {
 		owners.set(safe.id, resolvedSource);
 		const next: SidebarPanelData = {
 			...safe,
@@ -337,15 +339,26 @@ export function createSidebarPanelRegistry(options: SidebarPanelRegistryOptions 
 		changed();
 		return true;
 	};
-	const unregister = (id: SidebarPanelId, source?: string): boolean => {
-		if (disposed || !isSidebarPanelId(id)) return false;
-		const resolvedSource = source ?? sourceFor(id);
-		if (!isSidebarPanelSource(resolvedSource)) return false;
-		if (owners.get(id) !== resolvedSource) return false;
+	const register = (panel: SidebarPanelContribution, source?: string): boolean => {
+		if (disposed) return false;
+		const safe = sanitizeContribution(panel);
+		if (!safe || !safe.id.includes(":")) return false;
+		const resolvedSource = source ?? sourceFor(safe.id);
+		if (!isSidebarPanelSource(resolvedSource) || !canRegister(safe, resolvedSource)) return false;
+		return applyRegister(safe, resolvedSource);
+	};
+	const canUnregister = (id: SidebarPanelId, source: string): boolean => owners.get(id) === source;
+	const applyUnregister = (id: SidebarPanelId): boolean => {
 		owners.delete(id);
 		const removed = panels.delete(id);
 		changed();
 		return removed;
+	};
+	const unregister = (id: SidebarPanelId, source?: string): boolean => {
+		if (disposed || !isSidebarPanelId(id)) return false;
+		const resolvedSource = source ?? sourceFor(id);
+		if (!isSidebarPanelSource(resolvedSource) || !canUnregister(id, resolvedSource)) return false;
+		return applyUnregister(id);
 	};
 	const handleEvent = (data: unknown): void => {
 		if (disposed || !isEvent(data)) return;
@@ -358,9 +371,17 @@ export function createSidebarPanelRegistry(options: SidebarPanelRegistryOptions 
 			if (!panel) return;
 		} else if (data.type !== "unregister" || !isSidebarPanelId(data.id)) return;
 		const revision = data.revision as number;
-		if (!acceptRevision(data.source, revision)) return;
-		if (panel) register(panel, data.source);
-		else unregister(data.id as SidebarPanelId, data.source);
+		if (!canTrackSource(data.source) || !canAcceptRevision(data.source, revision)) return;
+		if (panel) {
+			if (!canRegister(panel, data.source)) return;
+			trackRevision(data.source, revision);
+			applyRegister(panel, data.source);
+		} else {
+			const id = data.id as SidebarPanelId;
+			if (!canUnregister(id, data.source)) return;
+			trackRevision(data.source, revision);
+			applyUnregister(id);
+		}
 	};
 	if (options.events) {
 		unsubscribe = options.events.on(SIDEBAR_PANEL_EVENT_CHANNEL, handleEvent);

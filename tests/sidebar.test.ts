@@ -15,6 +15,7 @@ import {
 	SIDEBAR_PANEL_MAX_ID_CHARS,
 	SIDEBAR_PANEL_MAX_SOURCE_CHARS,
 	SIDEBAR_PANEL_MAX_PANELS,
+	SIDEBAR_PANEL_MAX_TRACKED_SOURCES,
 	isSidebarPanelId,
 } from "../src/sidebar.js";
 import { DEFAULT_SIDEBAR_WIDTH } from "../src/split-pane.js";
@@ -443,8 +444,8 @@ describe("sidebar snapshot and layout", () => {
 		});
 		expect(registry.get("vendor:panel-0")?.title).toBe("Updated at capacity");
 
-		// Rejected new registrations still consume a valid event revision, so
-		// replaying it after capacity is freed is deterministic.
+		// Capacity-rejected registrations do not consume a source revision, so
+		// retrying the same event after capacity is freed succeeds.
 		registry.handleEvent({
 			version: 1,
 			type: "register",
@@ -466,9 +467,9 @@ describe("sidebar snapshot and layout", () => {
 			type: "register",
 			source: "overflow",
 			revision: 1,
-			panel: panel("vendor:overflow", "Stale retry"),
+			panel: panel("vendor:overflow", "Retried after capacity"),
 		});
-		expect(registry.get("vendor:overflow")).toBeUndefined();
+		expect(registry.get("vendor:overflow")?.title).toBe("Retried after capacity");
 		registry.handleEvent({
 			version: 1,
 			type: "register",
@@ -483,6 +484,135 @@ describe("sidebar snapshot and layout", () => {
 		expect(registry.unregister("vendor:panel-1", "vendor")).toBe(true);
 		expect(registry.register(panel("vendor:direct"), "vendor")).toBe(true);
 		expect(registry.getAvailable()).toHaveLength(SIDEBAR_PANEL_MAX_PANELS);
+		registry.dispose();
+	});
+
+	it("does not track capacity-rejected or invalid-owner sources", () => {
+		const panel = (id: string, title = id) => ({
+			id: id as `vendor:${string}`,
+			title,
+			rows: [],
+		});
+		const capacityRegistry = createSidebarPanelRegistry();
+		for (let index = 0; index < SIDEBAR_PANEL_MAX_PANELS; index += 1) {
+			expect(capacityRegistry.register(panel(`vendor:full-${index}`), "owner")).toBe(true);
+		}
+		for (let index = 0; index < SIDEBAR_PANEL_MAX_TRACKED_SOURCES * 2; index += 1) {
+			capacityRegistry.handleEvent({
+				version: 1,
+				type: "register",
+				source: `capacity-${index}`,
+				revision: 1,
+				panel: panel(`capacity-${index}:panel`),
+			});
+		}
+		capacityRegistry.unregister("vendor:full-0", "owner");
+		capacityRegistry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "capacity-0",
+			revision: 1,
+			panel: panel("capacity-0:panel", "Accepted after retry"),
+		});
+		expect(capacityRegistry.get("capacity-0:panel")?.title).toBe("Accepted after retry");
+		capacityRegistry.dispose();
+
+		const ownerRegistry = createSidebarPanelRegistry();
+		expect(ownerRegistry.register(panel("vendor:owned"), "owner")).toBe(true);
+		for (let index = 0; index < SIDEBAR_PANEL_MAX_TRACKED_SOURCES * 2; index += 1) {
+			ownerRegistry.handleEvent({
+				version: 1,
+				type: "register",
+				source: `hijacker-${index}`,
+				revision: 1,
+				panel: panel("vendor:owned", "Hijacked"),
+			});
+			ownerRegistry.handleEvent({
+				version: 1,
+				type: "unregister",
+				source: `missing-${index}`,
+				revision: 1,
+				id: "vendor:missing",
+			});
+		}
+		ownerRegistry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "missing-0",
+			revision: 1,
+			panel: panel("vendor:missing", "Accepted after missing removal"),
+		});
+		expect(ownerRegistry.get("vendor:missing")?.title).toBe("Accepted after missing removal");
+		ownerRegistry.unregister("vendor:owned", "owner");
+		ownerRegistry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "hijacker-0",
+			revision: 1,
+			panel: panel("vendor:owned", "Accepted after owner removal"),
+		});
+		expect(ownerRegistry.get("vendor:owned")?.title).toBe("Accepted after owner removal");
+		ownerRegistry.dispose();
+	});
+
+	it("bounds tracked sources while preserving revisions for active sources", () => {
+		const registry = createSidebarPanelRegistry();
+		const panel = (id: string, title = id) => ({
+			id: id as `${string}:${string}`,
+			title,
+			rows: [],
+		});
+		for (let index = 0; index < SIDEBAR_PANEL_MAX_TRACKED_SOURCES; index += 1) {
+			registry.handleEvent({
+				version: 1,
+				type: "register",
+				source: `tracked-${index}`,
+				revision: 1,
+				panel: panel(`tracked-${index}:panel`),
+			});
+		}
+		expect(registry.getAvailable()).toHaveLength(SIDEBAR_PANEL_MAX_TRACKED_SOURCES);
+		registry.handleEvent({
+			version: 1,
+			type: "unregister",
+			source: "tracked-0",
+			revision: 2,
+			id: "tracked-0:panel",
+		});
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "overflow-source",
+			revision: 1,
+			panel: panel("overflow-source:panel"),
+		});
+		expect(registry.get("overflow-source:panel")).toBeUndefined();
+
+		// A tracked source remains usable for updates and removal after the cap.
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "tracked-1",
+			revision: 2,
+			panel: panel("tracked-1:panel", "Updated"),
+		});
+		expect(registry.get("tracked-1:panel")?.title).toBe("Updated");
+		registry.handleEvent({
+			version: 1,
+			type: "unregister",
+			source: "tracked-1",
+			revision: 3,
+			id: "tracked-1:panel",
+		});
+		expect(registry.get("tracked-1:panel")).toBeUndefined();
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "tracked-1",
+			revision: 2,
+			panel: panel("tracked-1:panel", "Stale"),
+		});
+		expect(registry.get("tracked-1:panel")).toBeUndefined();
 		registry.dispose();
 	});
 
