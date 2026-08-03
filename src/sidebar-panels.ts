@@ -10,6 +10,13 @@ import type {
 export const SIDEBAR_PANEL_EVENT_CHANNEL = "pi-atelier:sidebar-panels" as const;
 export const SIDEBAR_PANEL_PROTOCOL_VERSION = 1 as const;
 
+/** Maximum visible characters retained for a contributed panel title. */
+export const SIDEBAR_PANEL_MAX_TITLE_CHARS = 48;
+/** Maximum structured rows retained for one contributed panel. */
+export const SIDEBAR_PANEL_MAX_ROWS = 24;
+/** Maximum visible characters retained for one contributed row. */
+export const SIDEBAR_PANEL_MAX_ROW_CHARS = 160;
+
 /** Built-in panels remain available even when their optional content is empty. */
 export const BUILTIN_SIDEBAR_PANEL_IDS = [
 	"agent",
@@ -183,24 +190,49 @@ export function normalizeSidebarPanelLayout(
 	return normalized;
 }
 
+const ANSI_ESCAPE =
+	/(?:\u001b\][^\u0007]*(?:\u0007|\u001b\\)|\u001b\[[0-?]*[ -/]*[@-~]|\u009b[0-?]*[ -/]*[@-~])/g;
+
+function cleanSidebarPanelText(value: string): string {
+	return value
+		.replace(ANSI_ESCAPE, "")
+		.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+/** Defensively sanitize text before any Settings or Sidebar interpolation. */
+export function sanitizeSidebarPanelText(value: string, maxChars = SIDEBAR_PANEL_MAX_ROW_CHARS): string {
+	return Array.from(cleanSidebarPanelText(value)).slice(0, maxChars).join("");
+}
+
+function fitsSidebarPanelText(value: string, maxChars: number): boolean {
+	return Array.from(cleanSidebarPanelText(value)).length <= maxChars;
+}
+
 function sanitizeContribution(value: unknown): SidebarPanelContribution | undefined {
 	if (
 		!isRecord(value) ||
 		!isSidebarPanelId(value.id) ||
 		typeof value.title !== "string" ||
-		!Array.isArray(value.rows)
+		!Array.isArray(value.rows) ||
+		value.rows.length > SIDEBAR_PANEL_MAX_ROWS ||
+		!fitsSidebarPanelText(value.title, SIDEBAR_PANEL_MAX_TITLE_CHARS)
 	)
 		return undefined;
 	const rows: SidebarPanelRow[] = [];
 	for (const row of value.rows) {
-		if (typeof row === "string") rows.push({ text: row });
-		else if (isRecord(row) && typeof row.text === "string")
-			rows.push({ text: row.text, ...(isSidebarPanelRole(row.role) ? { role: row.role } : {}) });
-		else return undefined;
+		const text =
+			typeof row === "string" ? row : isRecord(row) && typeof row.text === "string" ? row.text : undefined;
+		if (text === undefined || !fitsSidebarPanelText(text, SIDEBAR_PANEL_MAX_ROW_CHARS)) return undefined;
+		rows.push({
+			text: sanitizeSidebarPanelText(text, SIDEBAR_PANEL_MAX_ROW_CHARS),
+			...(isRecord(row) && isSidebarPanelRole(row.role) ? { role: row.role } : {}),
+		});
 	}
 	return {
 		id: value.id,
-		title: value.title,
+		title: sanitizeSidebarPanelText(value.title, SIDEBAR_PANEL_MAX_TITLE_CHARS),
 		rows,
 		...(isSidebarPanelRole(value.role) ? { role: value.role } : {}),
 	};
@@ -231,6 +263,20 @@ function nextSidebarPanelRevision(events: SidebarPanelEventTransport, source: st
 	const next = (revisions.get(source) ?? 0) + 1;
 	revisions.set(source, next);
 	return next;
+}
+
+function sidebarPanelDataEqual(first: SidebarPanelData, second: SidebarPanelData): boolean {
+	return (
+		first.id === second.id &&
+		first.title === second.title &&
+		first.role === second.role &&
+		first.available === second.available &&
+		first.source === second.source &&
+		first.rows.length === second.rows.length &&
+		first.rows.every(
+			(row, index) => row.text === second.rows[index]?.text && row.role === second.rows[index]?.role,
+		)
+	);
 }
 
 /** Create a lifecycle-safe registry backed only by Pi's public event bus. */
@@ -264,7 +310,7 @@ export function createSidebarPanelRegistry(options: SidebarPanelRegistryOptions 
 		owners.set(safe.id, source);
 		const next: SidebarPanelData = { ...safe, rows: safe.rows as SidebarPanelRow[], available: true, source };
 		const previous = panels.get(safe.id);
-		if (previous && JSON.stringify(previous) === JSON.stringify(next)) return false;
+		if (previous && sidebarPanelDataEqual(previous, next)) return false;
 		panels.set(safe.id, next);
 		changed();
 		return true;

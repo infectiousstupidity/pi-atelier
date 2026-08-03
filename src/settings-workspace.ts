@@ -7,7 +7,12 @@ import {
 	toggleSegmentVisibility,
 } from "./display.js";
 import { renderFooterLine, type ThemeLike } from "./footer.js";
-import { DEFAULT_SIDEBAR_PANEL_LAYOUT } from "./sidebar-panels.js";
+import {
+	DEFAULT_SIDEBAR_PANEL_LAYOUT,
+	sanitizeSidebarPanelText,
+	SIDEBAR_PANEL_MAX_TITLE_CHARS,
+	isSidebarPanelId,
+} from "./sidebar-panels.js";
 import type {
 	AtelierConfig,
 	SidebarPanelId,
@@ -140,9 +145,7 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 	let undo: SessionDisplayOverride | undefined;
 	let hasUndo = false;
 	let sidebarDraft: SidebarPanelLayout = (
-		options.getSidebarPanelLayout?.() ??
-		options.getRenderConfig().sidebarPanelLayout ??
-		DEFAULT_SIDEBAR_PANEL_LAYOUT
+		options.getRenderConfig().sidebarPanelLayout ?? DEFAULT_SIDEBAR_PANEL_LAYOUT
 	).map((entry) => ({
 		id: entry.id,
 		visible: entry.visible,
@@ -154,9 +157,26 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 	let feedback = "";
 	let saving = false;
 
+	/** Keep unavailable configured entries in place and append newly discovered panels. */
+	const syncSidebarDraft = (): void => {
+		const available = options.getSidebarPanelLayout?.();
+		if (!available) return;
+		const configuredIds = new Set(sidebarDraft.map((entry) => entry.id));
+		for (const setting of available) {
+			if (!isSidebarPanelId(setting.id) || configuredIds.has(setting.id)) continue;
+			configuredIds.add(setting.id);
+			sidebarDraft.push({ id: setting.id, visible: false });
+		}
+	};
 	const sidebarSettings = (): SidebarPanelSetting[] => {
 		const available = options.getSidebarPanelLayout?.();
-		if (available) return available.map((entry) => ({ ...entry }));
+		if (available)
+			return available
+				.filter((entry) => isSidebarPanelId(entry.id))
+				.map((entry) => ({
+					...entry,
+					title: sanitizeSidebarPanelText(entry.title, SIDEBAR_PANEL_MAX_TITLE_CHARS) || entry.id,
+				}));
 		return sidebarDraft.map((entry) => ({
 			id: entry.id,
 			title: entry.id,
@@ -164,15 +184,18 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 			visible: entry.visible,
 		}));
 	};
-	const rows = (): Row[] => [
-		...DISPLAY_KEYS.map((id) => ({ kind: id, id }) as Row),
-		...display.segmentLayout.map((entry) => ({ kind: "segment", id: entry.id }) as Row),
-		{ kind: "action", id: "save" },
-		{ kind: "action", id: "revert" },
-		{ kind: "action", id: "undo" },
-		...sidebarDraft.map((entry) => ({ kind: "sidebarPanel", id: entry.id }) as Row),
-		{ kind: "action", id: "sidebar-default" },
-	];
+	const rows = (): Row[] => {
+		syncSidebarDraft();
+		return [
+			...DISPLAY_KEYS.map((id) => ({ kind: id, id }) as Row),
+			...display.segmentLayout.map((entry) => ({ kind: "segment", id: entry.id }) as Row),
+			{ kind: "action", id: "save" },
+			{ kind: "action", id: "revert" },
+			{ kind: "action", id: "undo" },
+			...sidebarDraft.map((entry) => ({ kind: "sidebarPanel", id: entry.id }) as Row),
+			{ kind: "action", id: "sidebar-default" },
+		];
+	};
 	const rowIndex = (target: Row, allRows = rows()): number =>
 		allRows.findIndex((row) => row.kind === target.kind && row.id === target.id);
 	const request = (live = false): void => {

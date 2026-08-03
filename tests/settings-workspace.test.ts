@@ -2,7 +2,12 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import { resolveDisplayLayers } from "../src/config.js";
 import { createSettingsWorkspace } from "../src/settings-workspace.js";
-import { DEFAULT_CONFIG, type DisplayLayerState, type DisplayPatch } from "../src/types.js";
+import {
+	DEFAULT_CONFIG,
+	type AtelierConfig,
+	type DisplayLayerState,
+	type DisplayPatch,
+} from "../src/types.js";
 
 const theme = {
 	fg: (_color: string, text: string) => text,
@@ -10,7 +15,22 @@ const theme = {
 	italic: (text: string) => text,
 };
 
-function harness(initialLayers: DisplayLayerState = {}) {
+function harness(
+	initialLayers: DisplayLayerState = {},
+	renderConfig: AtelierConfig = DEFAULT_CONFIG,
+	sidebarSettings: () => readonly {
+		id: AtelierConfig["sidebarPanelLayout"][number]["id"];
+		title: string;
+		available: boolean;
+		visible: boolean;
+	}[] = () =>
+		DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => ({
+			id: entry.id,
+			title: entry.id === "agent" ? "Agent" : entry.id,
+			available: entry.id !== "tools",
+			visible: entry.visible,
+		})),
+) {
 	let layers: DisplayLayerState = structuredClone(initialLayers);
 	const render = vi.fn();
 	const live = vi.fn();
@@ -32,14 +52,8 @@ function harness(initialLayers: DisplayLayerState = {}) {
 		applySavedUserDisplayPatch: (patch) => {
 			layers = { ...layers, user: { ...layers.user, ...structuredClone(patch) } };
 		},
-		getRenderConfig: () => DEFAULT_CONFIG,
-		getSidebarPanelLayout: () =>
-			DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => ({
-				id: entry.id,
-				title: entry.id === "agent" ? "Agent" : entry.id,
-				available: entry.id !== "tools",
-				visible: entry.visible,
-			})),
+		getRenderConfig: () => renderConfig,
+		getSidebarPanelLayout: sidebarSettings,
 		theme,
 		colorEnabled: false,
 		requestWorkspaceRender: render,
@@ -62,6 +76,61 @@ const text = (component: ReturnType<typeof createSettingsWorkspace>, width = 120
 	component.render(width).join("\n");
 
 describe("Display Settings Workspace", () => {
+	it("merges newly discovered contributed panels into draft rows and saves enabled panels", async () => {
+		let discovered = false;
+		const configuredLayout = [
+			{ id: "vendor:missing" as const, visible: true },
+			...DEFAULT_CONFIG.sidebarPanelLayout,
+		];
+		const renderConfig = { ...DEFAULT_CONFIG, sidebarPanelLayout: configuredLayout };
+		const h = harness({}, renderConfig, () => [
+			...configuredLayout.map((entry) => ({
+				id: entry.id,
+				title: entry.id === "vendor:missing" ? "Missing" : entry.id,
+				available: entry.id !== "vendor:missing" && entry.id !== "tools",
+				visible: entry.visible,
+			})),
+			...(discovered
+				? [{ id: "vendor:queue" as const, title: "Queue", available: true, visible: false }]
+				: []),
+		]);
+		discovered = true;
+		expect(text(h.component)).toContain("Queue");
+		expect(text(h.component)).toContain("Missing  unavailable");
+
+		// Two display rows, nine segments, and three actions precede the configured layout.
+		for (let index = 0; index < 14 + configuredLayout.length; index += 1) h.component.handleInput("\u001b[B");
+		h.component.handleInput(" ");
+		h.component.handleInput("s");
+		await vi.waitFor(() => expect(h.persist).toHaveBeenCalled());
+		expect(h.persist.mock.calls[0]?.[0]).toEqual(
+			expect.objectContaining({
+				sidebarPanelLayout: expect.arrayContaining([
+					{ id: "vendor:missing", visible: true },
+					{ id: "vendor:queue", visible: true },
+				]),
+			}),
+		);
+		expect(h.persist.mock.calls[0]?.[0].sidebarPanelLayout?.map((entry) => entry.id)).toEqual([
+			...configuredLayout.map((entry) => entry.id),
+			"vendor:queue",
+		]);
+	});
+
+	it("defensively sanitizes contributed titles before Settings interpolation", () => {
+		const h = harness({}, DEFAULT_CONFIG, () =>
+			DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => ({
+				id: entry.id,
+				title: entry.id === "agent" ? "\u001b[31mSafe\nTitle" : entry.id,
+				available: true,
+				visible: entry.visible,
+			})),
+		);
+		const rendered = text(h.component);
+		expect(rendered).toContain("Safe Title");
+		expect(rendered).not.toContain("[31m");
+	});
+
 	it("edits Sidebar as a draft, preserves unavailable placement, and saves only explicitly", async () => {
 		const h = harness();
 		for (let index = 0; index < 14; index += 1) h.component.handleInput("\u001b[B");

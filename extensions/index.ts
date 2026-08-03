@@ -42,6 +42,9 @@ export {
 	SIDEBAR_PANEL_PROTOCOL_VERSION,
 	createSidebarPanelRegistry,
 	registerSidebarPanel,
+	SIDEBAR_PANEL_MAX_ROW_CHARS,
+	SIDEBAR_PANEL_MAX_ROWS,
+	SIDEBAR_PANEL_MAX_TITLE_CHARS,
 } from "../src/sidebar-panels.js";
 export type {
 	SidebarPanelContribution,

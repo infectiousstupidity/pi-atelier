@@ -9,6 +9,9 @@ import {
 	createSidebarComponent,
 	createSidebarController,
 	renderSidebarLines,
+	SIDEBAR_PANEL_MAX_ROW_CHARS,
+	SIDEBAR_PANEL_MAX_ROWS,
+	SIDEBAR_PANEL_MAX_TITLE_CHARS,
 } from "../src/sidebar.js";
 import { DEFAULT_SIDEBAR_WIDTH } from "../src/split-pane.js";
 import { type AtelierState, DEFAULT_CONFIG } from "../src/types.js";
@@ -332,6 +335,44 @@ describe("sidebar snapshot and layout", () => {
 		registry.dispose();
 	});
 
+	it("sanitizes titles and rows and rejects oversized contribution payloads", () => {
+		const registry = createSidebarPanelRegistry();
+		expect(
+			registry.register({
+				id: "vendor:safe",
+				title: "\u001b[31mQueue\nready\u001b[0m",
+				rows: ["one\n two", { text: "\u001b[33mtwo\u001b[0m", role: "warning" }],
+			}),
+		).toBe(true);
+		expect(registry.get("vendor:safe")).toMatchObject({
+			title: "Queue ready",
+			rows: [{ text: "one two" }, { text: "two", role: "warning" }],
+		});
+		expect(
+			registry.register({
+				id: "vendor:long-title",
+				title: "t".repeat(SIDEBAR_PANEL_MAX_TITLE_CHARS + 1),
+				rows: [],
+			}),
+		).toBe(false);
+		expect(
+			registry.register({
+				id: "vendor:long-row",
+				title: "Long row",
+				rows: ["r".repeat(SIDEBAR_PANEL_MAX_ROW_CHARS + 1)],
+			}),
+		).toBe(false);
+		expect(
+			registry.register({
+				id: "vendor:many-rows",
+				title: "Many rows",
+				rows: Array.from({ length: SIDEBAR_PANEL_MAX_ROWS + 1 }, () => "row"),
+			}),
+		).toBe(false);
+		expect(registry.getAvailable()).toHaveLength(1);
+		registry.dispose();
+	});
+
 	it("keeps publisher IDs stable and ignores updates after teardown", () => {
 		const emitted: unknown[] = [];
 		const listeners = new Set<(data: unknown) => void>();
@@ -369,6 +410,40 @@ describe("sidebar snapshot and layout", () => {
 			activeToolCount: 8,
 			availableToolCount: 12,
 		});
+	});
+
+	it("sanitizes contributed title and structured row text at render time", () => {
+		const config = {
+			...DEFAULT_CONFIG,
+			sidebarPanelLayout: [
+				{ id: "vendor:unsafe" as const, visible: true },
+				...DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => ({ ...entry, visible: false })),
+			],
+		};
+		const rendered = renderSidebarLines(
+			{
+				...snapshot(),
+				sidebarPanels: [
+					{
+						id: "vendor:unsafe",
+						title: "\u001b[31mUnsafe\nTitle",
+						rows: [{ text: "row\nvalue\u001b[33m", role: "warning" }],
+						available: true,
+						source: "vendor",
+					},
+				],
+			},
+			config,
+			theme,
+			44,
+			20,
+			false,
+			0,
+		).join("\n");
+		expect(rendered).toContain("UNSAFE TITLE");
+		expect(rendered).toContain("row value");
+		expect(rendered).not.toContain("[31m");
+		expect(rendered).not.toContain("[33m");
 	});
 
 	it("renders an explicit empty state when every configured-visible panel is unavailable", () => {

@@ -83,18 +83,21 @@ function setSidebarVisibility(
 	if (entry) entry.visible = visible;
 }
 
-function resolveSidebarLayout(layers: DisplayLayerState): SidebarResolution {
+function resolveSidebarLayout(
+	layers: DisplayLayerState,
+	base: AtelierConfig = DEFAULT_CONFIG,
+): SidebarResolution {
 	const warnings: string[] = [];
 	const user = layers.user;
 	if (user && "sidebarPanelLayout" in user) {
 		const parsed = parseSidebarLayout(user.sidebarPanelLayout, warnings);
 		return {
-			layout: parsed ?? cloneSidebarLayout(DEFAULT_SIDEBAR_PANEL_LAYOUT),
+			layout: parsed ?? cloneSidebarLayout(base.sidebarPanelLayout),
 			warnings,
 			authoritative: true,
 		};
 	}
-	const layout = cloneSidebarLayout(DEFAULT_SIDEBAR_PANEL_LAYOUT);
+	const layout = cloneSidebarLayout(base.sidebarPanelLayout);
 	// Legacy Agent and TODOS visibility are global-user-only compatibility inputs.
 	// Project/session values are intentionally ignored.
 	if (user && typeof user.showSidebarAgent === "boolean")
@@ -367,11 +370,16 @@ function applyNonDisplay(input: unknown, config: AtelierConfig, warnings: string
 	}
 }
 
-function applyGlobalSidebarCompatibility(config: AtelierConfig, input: unknown): void {
-	const global = cloneConfig(DEFAULT_CONFIG);
-	applyNonDisplay(input, global, []);
-	config.showSidebarAgent = global.showSidebarAgent;
-	config.showSidebarTodos = global.showSidebarTodos;
+function applyGlobalSidebarCompatibility(
+	config: AtelierConfig,
+	input: unknown,
+	base: Pick<AtelierConfig, "showSidebarAgent" | "showSidebarTodos"> = DEFAULT_CONFIG,
+): void {
+	config.showSidebarAgent = base.showSidebarAgent;
+	config.showSidebarTodos = base.showSidebarTodos;
+	const global = record(input);
+	if (typeof global?.showSidebarAgent === "boolean") config.showSidebarAgent = global.showSidebarAgent;
+	if (typeof global?.showSidebarTodos === "boolean") config.showSidebarTodos = global.showSidebarTodos;
 }
 
 export function validateConfig(input: unknown, base: AtelierConfig = DEFAULT_CONFIG): ConfigLoadResult {
@@ -381,14 +389,14 @@ export function validateConfig(input: unknown, base: AtelierConfig = DEFAULT_CON
 	const inputRecord = record(input);
 	const displayLayers: DisplayLayerState = inputRecord ? { user: inputRecord } : {};
 	const resolved = resolveDisplayLayers(displayLayers, base);
-	const sidebar = resolveSidebarLayout(displayLayers);
+	const sidebar = resolveSidebarLayout(displayLayers, base);
 	Object.assign(config, resolved.display, { sidebarPanelLayout: cloneSidebarLayout(sidebar.layout) });
 	if (sidebar.authoritative) {
 		config.showSidebarAgent =
 			sidebar.layout.find((entry) => entry.id === "agent")?.visible ?? config.showSidebarAgent;
 		config.showSidebarTodos =
 			sidebar.layout.find((entry) => entry.id === "todos")?.visible ?? config.showSidebarTodos;
-	} else applyGlobalSidebarCompatibility(config, input);
+	} else applyGlobalSidebarCompatibility(config, input, base);
 	return {
 		config,
 		warnings: [...new Set([...warnings, ...resolved.warnings, ...sidebar.warnings])],

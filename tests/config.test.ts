@@ -100,6 +100,42 @@ describe("configuration", () => {
 		expect(result.config.segmentLayout).toEqual(DISPLAY_TEMPLATES.minimal.segmentLayout);
 	});
 
+	it("preserves a custom base Sidebar layout when input omits layout", () => {
+		const base = {
+			...DEFAULT_CONFIG,
+			showSidebarAgent: false,
+			showSidebarTodos: true,
+			sidebarPanelLayout: [
+				{ id: "vendor:queue" as const, visible: true },
+				{ id: "agent" as const, visible: false },
+				...DEFAULT_CONFIG.sidebarPanelLayout.filter((entry) => !["agent", "todos"].includes(entry.id)),
+			],
+		};
+		const result = validateConfig({ shortcut: "ctrl+x" }, base);
+		expect(result.config.sidebarPanelLayout).toEqual(base.sidebarPanelLayout);
+		expect(result.config.showSidebarAgent).toBe(false);
+		expect(result.config.showSidebarTodos).toBe(true);
+	});
+
+	it("translates legacy Sidebar visibility against a custom base without resetting it", () => {
+		const base = {
+			...DEFAULT_CONFIG,
+			showSidebarAgent: false,
+			showSidebarTodos: true,
+			sidebarPanelLayout: [
+				{ id: "vendor:queue" as const, visible: true },
+				{ id: "agent" as const, visible: false },
+				...DEFAULT_CONFIG.sidebarPanelLayout.filter((entry) => entry.id !== "agent"),
+			],
+		};
+		const result = validateConfig({ showSidebarTodos: false }, base);
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "vendor:queue")?.visible).toBe(true);
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible).toBe(false);
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "todos")?.visible).toBe(false);
+		expect(result.config.showSidebarAgent).toBe(false);
+		expect(result.config.showSidebarTodos).toBe(false);
+	});
+
 	it("merges user, trusted project, then session with actionable provenance", async () => {
 		await writeJson(userPath, { density: "compact" });
 		await writeJson(projectPath, {

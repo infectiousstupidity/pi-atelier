@@ -3,7 +3,15 @@ import { basename } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Component, type OverlayHandle, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { ThemeLike } from "./footer.js";
-import { BUILTIN_SIDEBAR_PANEL_IDS, type SidebarPanelData, type SidebarPanelRole } from "./sidebar-panels.js";
+import {
+	BUILTIN_SIDEBAR_PANEL_IDS,
+	SIDEBAR_PANEL_MAX_ROW_CHARS,
+	SIDEBAR_PANEL_MAX_ROWS,
+	SIDEBAR_PANEL_MAX_TITLE_CHARS,
+	sanitizeSidebarPanelText,
+	type SidebarPanelData,
+	type SidebarPanelRole,
+} from "./sidebar-panels.js";
 import { formatTokens } from "./metrics.js";
 import { type AtelierPalette, createPalette, type PaletteRole } from "./palette.js";
 import {
@@ -24,6 +32,10 @@ export {
 	createSidebarPanelRegistry,
 	isSidebarPanelId,
 	registerSidebarPanel,
+	sanitizeSidebarPanelText,
+	SIDEBAR_PANEL_MAX_TITLE_CHARS,
+	SIDEBAR_PANEL_MAX_ROWS,
+	SIDEBAR_PANEL_MAX_ROW_CHARS,
 } from "./sidebar-panels.js";
 export type {
 	SidebarPanelContribution,
@@ -150,7 +162,7 @@ function panelRows(
 ): string[] {
 	const safeWidth = Math.max(4, Math.trunc(width));
 	const innerWidth = Math.max(0, safeWidth - 4);
-	const safeTitle = sanitize(title).toUpperCase();
+	const safeTitle = sanitizeSidebarPanelText(title, SIDEBAR_PANEL_MAX_TITLE_CHARS).toUpperCase();
 	const crownPrefix = `╭─ ${jewel} `;
 	const crownFill = "─".repeat(
 		Math.max(0, safeWidth - visibleWidth(crownPrefix) - visibleWidth(safeTitle) - 2),
@@ -650,8 +662,11 @@ function panelIdForTitle(title: string): string | undefined {
 }
 
 function contributedRows(panel: SidebarPanelData, palette: AtelierPalette): string[] {
-	const rows = panel.rows.map((row) => {
-		const text = sanitize(typeof row === "string" ? row : row.text);
+	const rows = panel.rows.slice(0, SIDEBAR_PANEL_MAX_ROWS).map((row) => {
+		const text = sanitizeSidebarPanelText(
+			typeof row === "string" ? row : row.text,
+			SIDEBAR_PANEL_MAX_ROW_CHARS,
+		);
 		const role = typeof row === "string" ? panel.role : (row.role ?? panel.role);
 		return palette.paint((role ?? "primary") as SidebarPanelRole, text);
 	});

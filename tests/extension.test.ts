@@ -461,13 +461,10 @@ describe("extension registration", () => {
 		expect(menu).toContain("Sidebar: On");
 	});
 
-	it("passes contributed titles and unavailable status through the public Display seam", async () => {
+	it("passes contributed titles through the public Display seam and persists enabling them", async () => {
 		await withPersistedUserConfig(
 			{
-				sidebarPanelLayout: [
-					{ id: "vendor:queue", visible: true },
-					{ id: "vendor:missing", visible: true },
-				],
+				sidebarPanelLayout: [{ id: "vendor:missing", visible: true }],
 			},
 			async () => {
 				const h = harness();
@@ -480,10 +477,38 @@ describe("extension registration", () => {
 					panel: { id: "vendor:queue", title: "Queue title", rows: ["queued"] },
 				});
 				await command(h, "display");
-				const rendered = h.overlays.at(-1)?.component.render(120).join("\n") ?? "";
+				const workspace = h.overlays.at(-1)?.component;
+				const rendered = workspace?.render(120).join("\n") ?? "";
 				expect(rendered).toContain("Queue title");
 				expect(rendered).toContain("vendor:missing");
 				expect(rendered).toContain("unavailable");
+
+				// Two display rows, nine segments, and three actions precede configured panels.
+				for (let index = 0; index < 14 + 9; index += 1) workspace?.handleInput("\u001b[B");
+				workspace?.handleInput(" ");
+				workspace?.handleInput("s");
+				await vi.waitFor(() => expect(h.saveConfigPatch).toHaveBeenCalled());
+				const patch = h.saveConfigPatch.mock.calls.at(-1)?.[1] as {
+					sidebarPanelLayout?: Array<{ id: string; visible: boolean }>;
+				};
+				expect(patch.sidebarPanelLayout).toEqual(
+					expect.arrayContaining([
+						{ id: "vendor:missing", visible: true },
+						{ id: "vendor:queue", visible: true },
+					]),
+				);
+				expect(patch.sidebarPanelLayout?.map((entry) => entry.id)).toEqual([
+					"vendor:missing",
+					"agent",
+					"activity",
+					"alerts",
+					"todos",
+					"context",
+					"workspace",
+					"usage",
+					"tools",
+					"vendor:queue",
+				]);
 			},
 		);
 	});
