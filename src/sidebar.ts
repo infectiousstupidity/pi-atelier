@@ -3,15 +3,6 @@ import { basename } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Component, type OverlayHandle, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { ThemeLike } from "./footer.js";
-import {
-	BUILTIN_SIDEBAR_PANEL_IDS,
-	SIDEBAR_PANEL_MAX_ROW_CHARS,
-	SIDEBAR_PANEL_MAX_ROWS,
-	SIDEBAR_PANEL_MAX_TITLE_CHARS,
-	sanitizeSidebarPanelText,
-	type SidebarPanelData,
-	type SidebarPanelRole,
-} from "./sidebar-panels.js";
 import { formatTokens } from "./metrics.js";
 import { type AtelierPalette, createPalette, type PaletteRole } from "./palette.js";
 import {
@@ -21,39 +12,55 @@ import {
 	type RunActivitySnapshot,
 	type ToolActivity,
 } from "./run-activity.js";
+import {
+	BUILTIN_SIDEBAR_PANEL_IDS,
+	isSidebarPanelContributionId,
+	SIDEBAR_PANEL_MAX_ROW_CHARS,
+	SIDEBAR_PANEL_MAX_ROWS,
+	SIDEBAR_PANEL_MAX_TITLE_CHARS,
+	type SidebarPanelData,
+	type SidebarPanelRole,
+	sanitizeSidebarPanelText,
+} from "./sidebar-panels.js";
 import { createSplitPaneController, type SplitPaneController } from "./split-pane.js";
 import type { AtelierConfig, AtelierState, NormalizedTodo, WorkspacePulseState } from "./types.js";
 import type { WorkspacePulseData } from "./workspace-pulse.js";
 
-export {
-	BUILTIN_SIDEBAR_PANEL_IDS,
-	DEFAULT_SIDEBAR_PANEL_LAYOUT,
-	SIDEBAR_PANEL_EVENT_CHANNEL,
-	createSidebarPanelRegistry,
-	isSidebarPanelId,
-	isSidebarPanelContributionId,
-	registerSidebarPanel,
-	sanitizeSidebarPanelText,
-	SIDEBAR_PANEL_MAX_TITLE_CHARS,
-	SIDEBAR_PANEL_MAX_ROWS,
-	SIDEBAR_PANEL_MAX_ROW_CHARS,
-	SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS,
-	SIDEBAR_PANEL_MAX_RAW_ROW_CODE_UNITS,
-	SIDEBAR_PANEL_MAX_ID_CHARS,
-	SIDEBAR_PANEL_MAX_SOURCE_CHARS,
-	SIDEBAR_PANEL_MAX_PANELS,
-	SIDEBAR_PANEL_MAX_TRACKED_SOURCES,
-	isSidebarPanelTextWithinRawLimit,
-	isSidebarPanelSource,
-} from "./sidebar-panels.js";
 export type {
 	SidebarPanelContribution,
 	SidebarPanelData,
+	SidebarPanelDiscoveryEvent,
 	SidebarPanelEvent,
 	SidebarPanelEventTransport,
+	SidebarPanelRegisterEvent,
 	SidebarPanelRegistry,
-	SidebarPanelRow,
+	SidebarPanelRegistryOptions,
 	SidebarPanelRole,
+	SidebarPanelRow,
+	SidebarPanelUnregisterEvent,
+} from "./sidebar-panels.js";
+export {
+	BUILTIN_SIDEBAR_PANEL_IDS,
+	createSidebarPanelRegistry,
+	DEFAULT_SIDEBAR_PANEL_LAYOUT,
+	isSidebarPanelContributionId,
+	isSidebarPanelId,
+	isSidebarPanelRequestId,
+	isSidebarPanelSource,
+	isSidebarPanelTextWithinRawLimit,
+	registerSidebarPanel,
+	SIDEBAR_PANEL_EVENT_CHANNEL,
+	SIDEBAR_PANEL_MAX_ID_CHARS,
+	SIDEBAR_PANEL_MAX_PANELS,
+	SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS,
+	SIDEBAR_PANEL_MAX_RAW_ROW_CODE_UNITS,
+	SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS,
+	SIDEBAR_PANEL_MAX_ROW_CHARS,
+	SIDEBAR_PANEL_MAX_ROWS,
+	SIDEBAR_PANEL_MAX_SOURCE_CHARS,
+	SIDEBAR_PANEL_MAX_TITLE_CHARS,
+	SIDEBAR_PANEL_MAX_TRACKED_SOURCES,
+	sanitizeSidebarPanelText,
 } from "./sidebar-panels.js";
 
 export interface SidebarSnapshotInput {
@@ -1006,7 +1013,7 @@ export function renderSidebarLines(
 		const builtin = BUILTIN_SIDEBAR_PANEL_IDS.includes(
 			entry.id as (typeof BUILTIN_SIDEBAR_PANEL_IDS)[number],
 		);
-		const panel = contributed.get(entry.id);
+		const panel = isSidebarPanelContributionId(entry.id) ? contributed.get(entry.id) : undefined;
 		if (builtin) {
 			availableVisible = true;
 			ordered.push(...(grouped.get(entry.id) ?? []));

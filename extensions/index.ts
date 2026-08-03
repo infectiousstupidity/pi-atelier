@@ -17,53 +17,72 @@ import {
 import { loadConfig, saveUserConfig, saveUserConfigPatch } from "../src/config.js";
 import { createFooterComponent, type ThemeLike } from "../src/footer.js";
 import {
+	type DisplaySettingsRuntime,
 	openAtelierControlCenter,
 	openDisplaySettingsWorkspace,
-	type DisplaySettingsRuntime,
 } from "../src/menu.js";
-import type { SidebarPanelSetting } from "../src/settings-workspace.js";
 import { createRunActivityTracker, type RunActivityTracker } from "../src/run-activity.js";
-import {
-	BUILTIN_SIDEBAR_PANEL_IDS,
-	createSidebarPanelRegistry,
-	type SidebarPanelRegistry,
-} from "../src/sidebar-panels.js";
+import type { SidebarPanelSetting } from "../src/settings-workspace.js";
 import {
 	buildSidebarSnapshot,
 	createSidebarController,
 	type SidebarController,
 	type SidebarSnapshot,
 } from "../src/sidebar.js";
+import {
+	BUILTIN_SIDEBAR_PANEL_IDS,
+	createSidebarPanelRegistry,
+	isSidebarPanelContributionId,
+	type SidebarPanelRegistry,
+} from "../src/sidebar-panels.js";
 import { AtelierRuntime } from "../src/state.js";
 import type { AtelierState, FooterState, NormalizedTodo, RpivTask, TodoItem } from "../src/types.js";
 
-export {
-	SIDEBAR_PANEL_EVENT_CHANNEL,
-	SIDEBAR_PANEL_PROTOCOL_VERSION,
-	createSidebarPanelRegistry,
-	registerSidebarPanel,
-	SIDEBAR_PANEL_MAX_ROW_CHARS,
-	SIDEBAR_PANEL_MAX_ROWS,
-	SIDEBAR_PANEL_MAX_TITLE_CHARS,
-	SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS,
-	SIDEBAR_PANEL_MAX_RAW_ROW_CODE_UNITS,
-	SIDEBAR_PANEL_MAX_ID_CHARS,
-	SIDEBAR_PANEL_MAX_SOURCE_CHARS,
-	SIDEBAR_PANEL_MAX_PANELS,
-	SIDEBAR_PANEL_MAX_TRACKED_SOURCES,
-	isSidebarPanelContributionId,
-	isSidebarPanelTextWithinRawLimit,
-	isSidebarPanelSource,
-} from "../src/sidebar-panels.js";
 export type {
 	SidebarPanelContribution,
 	SidebarPanelData,
+	SidebarPanelDiscoveryEvent,
 	SidebarPanelEvent,
 	SidebarPanelEventTransport,
+	SidebarPanelRegisterEvent,
 	SidebarPanelRegistry,
-	SidebarPanelRow,
+	SidebarPanelRegistryOptions,
 	SidebarPanelRole,
+	SidebarPanelRow,
+	SidebarPanelUnregisterEvent,
 } from "../src/sidebar-panels.js";
+export {
+	BUILTIN_SIDEBAR_PANEL_IDS,
+	createSidebarPanelRegistry,
+	DEFAULT_SIDEBAR_PANEL_LAYOUT,
+	isSidebarPanelContributionId,
+	isSidebarPanelId,
+	isSidebarPanelRequestId,
+	isSidebarPanelRole,
+	isSidebarPanelSource,
+	isSidebarPanelTextWithinRawLimit,
+	normalizeSidebarPanelLayout,
+	registerSidebarPanel,
+	SIDEBAR_PANEL_EVENT_CHANNEL,
+	SIDEBAR_PANEL_MAX_ID_CHARS,
+	SIDEBAR_PANEL_MAX_PANELS,
+	SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS,
+	SIDEBAR_PANEL_MAX_RAW_ROW_CODE_UNITS,
+	SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS,
+	SIDEBAR_PANEL_MAX_ROW_CHARS,
+	SIDEBAR_PANEL_MAX_ROWS,
+	SIDEBAR_PANEL_MAX_SOURCE_CHARS,
+	SIDEBAR_PANEL_MAX_TITLE_CHARS,
+	SIDEBAR_PANEL_MAX_TRACKED_SOURCES,
+	SIDEBAR_PANEL_PROTOCOL_VERSION,
+} from "../src/sidebar-panels.js";
+export type {
+	BuiltinSidebarPanelId,
+	ContributedSidebarPanelId,
+	SidebarPanelId,
+	SidebarPanelLayout,
+	SidebarPanelLayoutEntry,
+} from "../src/types.js";
 
 export interface AtelierExtensionDependencies {
 	saveConfig?: typeof saveUserConfig;
@@ -271,14 +290,17 @@ export default function atelierExtension(
 		const available = new Map((panelRegistry?.getAvailable() ?? []).map((panel) => [panel.id, panel]));
 		const configuredIds = new Set(configured.map((entry) => entry.id));
 		return [
-			...configured.map((entry) => ({
-				id: entry.id,
-				title: available.get(entry.id)?.title ?? entry.id,
-				available:
-					BUILTIN_SIDEBAR_PANEL_IDS.includes(entry.id as (typeof BUILTIN_SIDEBAR_PANEL_IDS)[number]) ||
-					available.has(entry.id),
-				visible: entry.visible,
-			})),
+			...configured.map((entry) => {
+				const contributed = isSidebarPanelContributionId(entry.id) ? available.get(entry.id) : undefined;
+				return {
+					id: entry.id,
+					title: contributed?.title ?? entry.id,
+					available:
+						BUILTIN_SIDEBAR_PANEL_IDS.includes(entry.id as (typeof BUILTIN_SIDEBAR_PANEL_IDS)[number]) ||
+						contributed !== undefined,
+					visible: entry.visible,
+				};
+			}),
 			...Array.from(available.values())
 				.filter((panel) => !configuredIds.has(panel.id))
 				.map((panel) => ({

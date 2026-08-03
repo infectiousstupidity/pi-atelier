@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type {
 	ConfigurationSource,
+	ContributedSidebarPanelId,
 	SidebarPanelId,
 	SidebarPanelLayout,
 	SidebarPanelLayoutEntry,
@@ -27,6 +28,8 @@ export const SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS = SIDEBAR_PANEL_MAX_TITLE_CH
 export const SIDEBAR_PANEL_MAX_RAW_ROW_CODE_UNITS = SIDEBAR_PANEL_MAX_ROW_CHARS * 8;
 /** Maximum characters accepted for a namespaced contributed panel ID. */
 export const SIDEBAR_PANEL_MAX_ID_CHARS = 128;
+/** Maximum raw UTF-16 code units accepted for a discovery correlation token. */
+export const SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS = 256;
 /** Maximum characters accepted for a contributed panel source name. */
 export const SIDEBAR_PANEL_MAX_SOURCE_CHARS = 128;
 /** Maximum contributed panels retained by one registry. */
@@ -89,9 +92,16 @@ export interface SidebarPanelRow {
 
 /** Structured, presentation-only data accepted from another extension. */
 export interface SidebarPanelContribution {
-	id: SidebarPanelId;
+	id: ContributedSidebarPanelId;
 	title: string;
 	rows: readonly (string | SidebarPanelRow)[];
+	role?: SidebarPanelRole;
+}
+
+interface SanitizedSidebarPanelContribution {
+	id: ContributedSidebarPanelId;
+	title: string;
+	rows: SidebarPanelRow[];
 	role?: SidebarPanelRole;
 }
 
@@ -119,7 +129,7 @@ export interface SidebarPanelUnregisterEvent {
 	type: "unregister";
 	source: string;
 	revision: number;
-	id: SidebarPanelId;
+	id: ContributedSidebarPanelId;
 }
 
 export interface SidebarPanelDiscoveryEvent {
@@ -140,7 +150,7 @@ export interface SidebarPanelEventTransport {
 
 export interface SidebarPanelRegistry {
 	register(panel: SidebarPanelContribution, source?: string): boolean;
-	unregister(id: SidebarPanelId, source?: string): boolean;
+	unregister(id: ContributedSidebarPanelId, source?: string): boolean;
 	getAvailable(): readonly SidebarPanelData[];
 	get(id: string): SidebarPanelData | undefined;
 	/** Handle a public event directly; useful for runtime and public-seam tests. */
@@ -163,7 +173,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function isSidebarPanelContributionId(value: unknown): value is SidebarPanelId {
+export function isSidebarPanelContributionId(value: unknown): value is ContributedSidebarPanelId {
 	return typeof value === "string" && value.length <= SIDEBAR_PANEL_MAX_ID_CHARS && NAMESPACED_ID.test(value);
 }
 
@@ -174,6 +184,33 @@ export function isSidebarPanelId(value: unknown): value is SidebarPanelId {
 /** Validate the source name retained with a contributed panel and its events. */
 export function isSidebarPanelSource(value: unknown): value is string {
 	return typeof value === "string" && value.length <= SIDEBAR_PANEL_MAX_SOURCE_CHARS && value.trim() !== "";
+}
+
+/** Validate a discovery correlation token before it is echoed across the event bus. */
+export function isSidebarPanelRequestId(value: unknown): value is string {
+	if (
+		typeof value !== "string" ||
+		value.length === 0 ||
+		value.length > SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS ||
+		value.trim() === ""
+	)
+		return false;
+	for (let index = 0; index < value.length; index += 1) {
+		const codeUnit = value.charCodeAt(index);
+		if (codeUnit < 0x20 || (codeUnit >= 0x7f && codeUnit <= 0x9f)) return false;
+		if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+			const next = value.charCodeAt(index + 1);
+			if (!Number.isInteger(next) || next < 0xdc00 || next > 0xdfff) return false;
+			index += 1;
+		} else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+			return false;
+		}
+	}
+	return true;
+}
+
+function isSafeRevision(value: unknown): value is number {
+	return typeof value === "number" && Number.isSafeInteger(value);
 }
 
 export function isSidebarPanelRole(value: unknown): value is SidebarPanelRole {
@@ -259,7 +296,7 @@ function fitsSidebarPanelText(value: string, maxChars: number): boolean {
 	return Array.from(cleanSidebarPanelText(value)).length <= maxChars;
 }
 
-function sanitizeContribution(value: unknown): SidebarPanelContribution | undefined {
+function sanitizeContribution(value: unknown): SanitizedSidebarPanelContribution | undefined {
 	if (
 		!isRecord(value) ||
 		!isSidebarPanelContributionId(value.id) ||
@@ -328,6 +365,25 @@ function nextSidebarPanelRevision(events: SidebarPanelEventTransport, source: st
 	return next;
 }
 
+const DISCOVERY_REQUEST_SEPARATOR = "-";
+const MAX_SAFE_SEQUENCE_CODE_UNITS = String(Number.MAX_SAFE_INTEGER).length;
+const DEFAULT_DISCOVERY_PREFIX = "atelier";
+
+function boundedRawCodeUnits(value: string, maxCodeUnits: number): string {
+	const bounded = value.slice(0, maxCodeUnits);
+	return /[\ud800-\udbff]$/.test(bounded) ? bounded.slice(0, -1) : bounded;
+}
+
+function discoveryPrefix(instanceId: unknown): string {
+	const candidate = isSidebarPanelRequestId(instanceId) ? instanceId : DEFAULT_DISCOVERY_PREFIX;
+	const maxPrefixCodeUnits =
+		SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS -
+		DISCOVERY_REQUEST_SEPARATOR.length -
+		MAX_SAFE_SEQUENCE_CODE_UNITS;
+	const bounded = boundedRawCodeUnits(candidate, maxPrefixCodeUnits);
+	return isSidebarPanelRequestId(bounded) ? bounded : DEFAULT_DISCOVERY_PREFIX;
+}
+
 function sidebarPanelDataEqual(first: SidebarPanelData, second: SidebarPanelData): boolean {
 	return (
 		first.id === second.id &&
@@ -349,6 +405,7 @@ export function createSidebarPanelRegistry(options: SidebarPanelRegistryOptions 
 	const revisions = new Map<string, number>();
 	let disposed = false;
 	let requestSequence = 0;
+	const requestPrefix = discoveryPrefix(options.instanceId);
 	let unsubscribe: (() => void) | undefined;
 
 	const changed = (): void => {
@@ -372,11 +429,10 @@ export function createSidebarPanelRegistry(options: SidebarPanelRegistryOptions 
 		if (owner !== undefined && owner !== source) return false;
 		return panels.has(panel.id) || panels.size < SIDEBAR_PANEL_MAX_PANELS;
 	};
-	const applyRegister = (safe: SidebarPanelContribution, resolvedSource: string): boolean => {
+	const applyRegister = (safe: SanitizedSidebarPanelContribution, resolvedSource: string): boolean => {
 		owners.set(safe.id, resolvedSource);
 		const next: SidebarPanelData = {
 			...safe,
-			rows: safe.rows as SidebarPanelRow[],
 			available: true,
 			source: resolvedSource,
 		};
@@ -394,14 +450,14 @@ export function createSidebarPanelRegistry(options: SidebarPanelRegistryOptions 
 		if (!isSidebarPanelSource(resolvedSource) || !canRegister(safe, resolvedSource)) return false;
 		return applyRegister(safe, resolvedSource);
 	};
-	const canUnregister = (id: SidebarPanelId, source: string): boolean => owners.get(id) === source;
-	const applyUnregister = (id: SidebarPanelId): boolean => {
+	const canUnregister = (id: ContributedSidebarPanelId, source: string): boolean => owners.get(id) === source;
+	const applyUnregister = (id: ContributedSidebarPanelId): boolean => {
 		owners.delete(id);
 		const removed = panels.delete(id);
 		changed();
 		return removed;
 	};
-	const unregister = (id: SidebarPanelId, source?: string): boolean => {
+	const unregister = (id: ContributedSidebarPanelId, source?: string): boolean => {
 		if (disposed || !isSidebarPanelContributionId(id)) return false;
 		const resolvedSource = source ?? sourceFor(id);
 		if (!isSidebarPanelSource(resolvedSource) || !canUnregister(id, resolvedSource)) return false;
@@ -410,22 +466,31 @@ export function createSidebarPanelRegistry(options: SidebarPanelRegistryOptions 
 	const handleEvent = (data: unknown): void => {
 		if (disposed || !isEvent(data)) return;
 		if (data.type === "discover") return;
-		if (!isSidebarPanelSource(data.source) || !Number.isSafeInteger(data.revision)) return;
-		let panel: SidebarPanelContribution | undefined;
+		if (
+			!isSidebarPanelSource(data.source) ||
+			!isSafeRevision(data.revision) ||
+			(data.type === "register" && data.requestId !== undefined && !isSidebarPanelRequestId(data.requestId))
+		)
+			return;
+		const source = data.source;
+		const revision = data.revision;
+		let panel: SanitizedSidebarPanelContribution | undefined;
+		let id: ContributedSidebarPanelId | undefined;
 		if (data.type === "register") {
 			panel = sanitizeContribution(data.panel);
 			if (!panel) return;
-		} else if (data.type !== "unregister" || !isSidebarPanelContributionId(data.id)) return;
-		const revision = data.revision as number;
-		if (!canTrackSource(data.source) || !canAcceptRevision(data.source, revision)) return;
-		if (panel) {
-			if (!canRegister(panel, data.source)) return;
-			trackRevision(data.source, revision);
-			applyRegister(panel, data.source);
 		} else {
-			const id = data.id as SidebarPanelId;
-			if (!canUnregister(id, data.source)) return;
-			trackRevision(data.source, revision);
+			if (data.type !== "unregister" || !isSidebarPanelContributionId(data.id)) return;
+			id = data.id;
+		}
+		if (!canTrackSource(source) || !canAcceptRevision(source, revision)) return;
+		if (panel) {
+			if (!canRegister(panel, source)) return;
+			trackRevision(source, revision);
+			applyRegister(panel, source);
+		} else if (id !== undefined) {
+			if (!canUnregister(id, source)) return;
+			trackRevision(source, revision);
 			applyUnregister(id);
 		}
 	};
@@ -434,11 +499,15 @@ export function createSidebarPanelRegistry(options: SidebarPanelRegistryOptions 
 	}
 	const requestDiscovery = (): void => {
 		if (disposed || !options.events) return;
-		requestSequence += 1;
+		// Keep the sequence in Number's safe-integer range. A wrapped ID is
+		// preferable to emitting an imprecise correlation token after exhaustion.
+		requestSequence = requestSequence === Number.MAX_SAFE_INTEGER ? 1 : requestSequence + 1;
+		const requestId = `${requestPrefix}${DISCOVERY_REQUEST_SEPARATOR}${requestSequence}`;
+		if (!isSidebarPanelRequestId(requestId)) return;
 		options.events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
 			version: SIDEBAR_PANEL_PROTOCOL_VERSION,
 			type: "discover",
-			requestId: `${options.instanceId ?? "atelier"}-${requestSequence}`,
+			requestId,
 		});
 	};
 	requestDiscovery();
@@ -482,7 +551,7 @@ export function registerSidebarPanel(
 	options: { source?: string } = {},
 ): { update(panel: SidebarPanelContribution): void; dispose(): void } {
 	const initial = sanitizeContribution(panel);
-	const stableId = initial?.id && initial.id.includes(":") ? initial.id : undefined;
+	const stableId: ContributedSidebarPanelId | undefined = initial?.id;
 	const requestedSource = options.source ?? (stableId ? sourceFor(stableId) : undefined);
 	const source =
 		stableId && requestedSource !== undefined && isSidebarPanelSource(requestedSource)
@@ -491,7 +560,8 @@ export function registerSidebarPanel(
 	let current = source && stableId && initial ? initial : undefined;
 	let disposed = false;
 	const emitRegister = (requestId?: string): void => {
-		if (disposed || !source || !current) return;
+		if (disposed || !source || !current || (requestId !== undefined && !isSidebarPanelRequestId(requestId)))
+			return;
 		const revision = nextSidebarPanelRevision(pi.events, source);
 		if (revision === undefined) return;
 		pi.events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
@@ -505,7 +575,7 @@ export function registerSidebarPanel(
 	};
 	const unsubscribe = source
 		? pi.events.on(SIDEBAR_PANEL_EVENT_CHANNEL, (data) => {
-				if (!isEvent(data) || data.type !== "discover" || typeof data.requestId !== "string") return;
+				if (!isEvent(data) || data.type !== "discover" || !isSidebarPanelRequestId(data.requestId)) return;
 				emitRegister(data.requestId);
 			})
 		: () => undefined;

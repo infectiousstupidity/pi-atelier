@@ -6,13 +6,16 @@ import {
 	createSidebarComponent,
 	createSidebarController,
 	createSidebarPanelRegistry,
+	isSidebarPanelContributionId,
 	isSidebarPanelId,
+	isSidebarPanelRequestId,
 	isSidebarPanelTextWithinRawLimit,
 	registerSidebarPanel,
 	renderSidebarLines,
 	SIDEBAR_PANEL_EVENT_CHANNEL,
 	SIDEBAR_PANEL_MAX_ID_CHARS,
 	SIDEBAR_PANEL_MAX_PANELS,
+	SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS,
 	SIDEBAR_PANEL_MAX_RAW_ROW_CODE_UNITS,
 	SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS,
 	SIDEBAR_PANEL_MAX_ROW_CHARS,
@@ -242,6 +245,65 @@ describe("sidebar snapshot and layout", () => {
 		registry.dispose();
 	});
 
+	it("validates contributed IDs and bounded discovery request IDs at both public seams", () => {
+		expect(isSidebarPanelContributionId("vendor:queue")).toBe(true);
+		expect(isSidebarPanelContributionId("agent")).toBe(false);
+		expect(isSidebarPanelContributionId("Vendor:queue")).toBe(false);
+		expect(isSidebarPanelContributionId("vendor:")).toBe(false);
+		expect(isSidebarPanelRequestId("normal-request")).toBe(true);
+		expect(isSidebarPanelRequestId("π-界🙂")).toBe(true);
+		expect(isSidebarPanelRequestId("")).toBe(false);
+		expect(isSidebarPanelRequestId(" ")).toBe(false);
+		expect(isSidebarPanelRequestId("bad\nrequest")).toBe(false);
+		expect(isSidebarPanelRequestId("\ud800")).toBe(false);
+		expect(isSidebarPanelRequestId("x".repeat(SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS + 1))).toBe(false);
+
+		const emitted: unknown[] = [];
+		const listeners = new Set<(data: unknown) => void>();
+		const events = {
+			on: (_channel: string, handler: (data: unknown) => void) => {
+				listeners.add(handler);
+				return () => listeners.delete(handler);
+			},
+			emit: (_channel: string, data: unknown) => {
+				emitted.push(data);
+				for (const listener of [...listeners]) listener(data);
+			},
+		};
+		const publisher = registerSidebarPanel({ events }, { id: "vendor:queue", title: "Queue", rows: [] });
+		const initialRegisterCount = emitted.filter(
+			(data) => (data as { type?: unknown }).type === "register",
+		).length;
+		for (const requestId of ["", " ", "x".repeat(SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS + 1), null]) {
+			events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, { version: 1, type: "discover", requestId });
+		}
+		expect(emitted.filter((data) => (data as { type?: unknown }).type === "register")).toHaveLength(
+			initialRegisterCount,
+		);
+		events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
+			version: 1,
+			type: "discover",
+			requestId: "π-界🙂",
+		});
+		const response = emitted.at(-1) as { type?: string; requestId?: string };
+		expect(response).toMatchObject({ type: "register", requestId: "π-界🙂" });
+
+		const registryEvents = {
+			on: () => () => undefined,
+			emit: (_channel: string, data: unknown) => emitted.push(data),
+		};
+		const registry = createSidebarPanelRegistry({
+			events: registryEvents,
+			instanceId: "x".repeat(SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS + 1),
+		});
+		const generated = emitted.at(-1) as { type?: string; requestId?: string };
+		expect(generated.type).toBe("discover");
+		expect(generated.requestId).toBe("atelier-1");
+		expect(generated.requestId?.length).toBeLessThanOrEqual(SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS);
+		registry.dispose();
+		publisher.dispose();
+	});
+
 	it("allocates revisions across same-source publishers without coupling transports", () => {
 		const makeEvents = () => {
 			const listeners = new Set<(data: unknown) => void>();
@@ -360,6 +422,7 @@ describe("sidebar snapshot and layout", () => {
 
 	it("rejects built-in public contributions before ownership, revisions, or capacity are consumed", () => {
 		const registry = createSidebarPanelRegistry();
+		// @ts-expect-error Built-in IDs are intentionally rejected by this contributed-panel API.
 		expect(registry.register({ id: "agent", title: "Spoofed", rows: [] })).toBe(false);
 		for (const id of ["agent", "tools"] as const) {
 			registry.handleEvent({

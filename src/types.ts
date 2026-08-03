@@ -24,7 +24,9 @@ export type BuiltinSidebarPanelId =
 	| "usage"
 	| "tools";
 /** Stable namespaced IDs are used by contributed panels. */
-export type SidebarPanelId = BuiltinSidebarPanelId | `${string}:${string}`;
+export type ContributedSidebarPanelId = `${string}:${string}`;
+/** Configuration may retain built-ins and unavailable contributed panels. */
+export type SidebarPanelId = BuiltinSidebarPanelId | ContributedSidebarPanelId;
 export interface SidebarPanelLayoutEntry {
 	id: SidebarPanelId;
 	visible: boolean;
