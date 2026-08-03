@@ -170,7 +170,7 @@ function valueRow(value: string | undefined, palette: AtelierPalette, role: Pale
 	return palette.paint(text === "—" ? "dim" : role, text);
 }
 
-const COMPACT_SIDEBAR_MAX_WIDTH = 43;
+const COMPACT_SIDEBAR_MAX_WIDTH = 39;
 
 interface SidebarLayout {
 	compact: boolean;

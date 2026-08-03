@@ -216,6 +216,23 @@ function isEvent(value: unknown): value is Record<string, unknown> {
 	);
 }
 
+// Revision numbers are part of the event protocol's per-source ordering, not
+// of an individual publisher. Keep the allocator scoped to each transport so
+// separate Pi runtimes (and test buses) cannot affect one another, while the
+// weak key avoids retaining an event bus after its runtime is gone.
+const sidebarPanelRevisionAllocators = new WeakMap<object, Map<string, number>>();
+
+function nextSidebarPanelRevision(events: SidebarPanelEventTransport, source: string): number {
+	let revisions = sidebarPanelRevisionAllocators.get(events);
+	if (!revisions) {
+		revisions = new Map<string, number>();
+		sidebarPanelRevisionAllocators.set(events, revisions);
+	}
+	const next = (revisions.get(source) ?? 0) + 1;
+	revisions.set(source, next);
+	return next;
+}
+
 /** Create a lifecycle-safe registry backed only by Pi's public event bus. */
 export function createSidebarPanelRegistry(options: SidebarPanelRegistryOptions = {}): SidebarPanelRegistry {
 	const panels = new Map<string, SidebarPanelData>();
@@ -330,12 +347,11 @@ export function registerSidebarPanel(
 ): { update(panel: SidebarPanelContribution): void; dispose(): void } {
 	const source = options.source ?? sourceFor(panel.id);
 	const stableId = panel.id;
-	let revision = 0;
 	let current = { ...panel, id: stableId };
 	let disposed = false;
 	const emitRegister = (requestId?: string): void => {
 		if (disposed) return;
-		revision += 1;
+		const revision = nextSidebarPanelRevision(pi.events, source);
 		pi.events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
 			version: SIDEBAR_PANEL_PROTOCOL_VERSION,
 			type: "register",
@@ -362,12 +378,11 @@ export function registerSidebarPanel(
 			if (disposed) return;
 			disposed = true;
 			unsubscribe();
-			revision += 1;
 			pi.events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
 				version: SIDEBAR_PANEL_PROTOCOL_VERSION,
 				type: "unregister",
 				source,
-				revision,
+				revision: nextSidebarPanelRevision(pi.events, source),
 				id: current.id,
 			});
 		},

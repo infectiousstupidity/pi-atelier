@@ -204,6 +204,59 @@ describe("sidebar snapshot and layout", () => {
 		expect(SIDEBAR_PANEL_EVENT_CHANNEL).toBe("pi-atelier:sidebar-panels");
 		registry.dispose();
 	});
+
+	it("allocates revisions across same-source publishers without coupling transports", () => {
+		const makeEvents = () => {
+			const listeners = new Set<(data: unknown) => void>();
+			const emitted: unknown[] = [];
+			return {
+				events: {
+					on: (_channel: string, handler: (data: unknown) => void) => {
+						listeners.add(handler);
+						return () => listeners.delete(handler);
+					},
+					emit: (_channel: string, data: unknown) => {
+						emitted.push(data);
+						for (const listener of [...listeners]) listener(data);
+					},
+				},
+				emitted,
+			};
+		};
+		const firstTransport = makeEvents();
+		const secondTransport = makeEvents();
+		const first = registerSidebarPanel(
+			{ events: firstTransport.events },
+			{ id: "vendor:queue", title: "Queue", rows: ["one"] },
+			{ source: "vendor" },
+		);
+		const second = registerSidebarPanel(
+			{ events: firstTransport.events },
+			{ id: "vendor:status", title: "Status", rows: ["ready"] },
+			{ source: "vendor" },
+		);
+		registerSidebarPanel(
+			{ events: secondTransport.events },
+			{ id: "vendor:other", title: "Other", rows: ["isolated"] },
+			{ source: "vendor" },
+		);
+
+		const registry = createSidebarPanelRegistry({ events: firstTransport.events });
+		expect(registry.get("vendor:queue")?.title).toBe("Queue");
+		expect(registry.get("vendor:status")?.title).toBe("Status");
+		first.update({ id: "vendor:queue", title: "Updated queue", rows: ["two"] });
+		second.update({ id: "vendor:status", title: "Updated status", rows: ["busy"] });
+		expect(registry.get("vendor:queue")?.rows[0]?.text).toBe("two");
+		expect(registry.get("vendor:status")?.rows[0]?.text).toBe("busy");
+		first.dispose();
+		expect(registry.get("vendor:queue")).toBeUndefined();
+		expect(registry.get("vendor:status")?.title).toBe("Updated status");
+		expect((firstTransport.emitted[0] as { revision?: number })?.revision).toBe(1);
+		expect((secondTransport.emitted[0] as { revision?: number })?.revision).toBe(1);
+		second.dispose();
+		registry.dispose();
+	});
+
 	it("rejects malformed public events and preserves panel ownership across revisions", () => {
 		const registry = createSidebarPanelRegistry();
 		for (const event of [
@@ -563,6 +616,21 @@ describe("sidebar snapshot and layout", () => {
 		expect(regular).toContain("OPENAI-CODEX · MEDIUM · SUBSCRIPTION");
 		expect(regular).toContain("pi-atelier · feature/sidebar ▲");
 		expect(regular).toContainEqual(expect.stringMatching(/^8 \/ 12 active\s+▾$/));
+	});
+
+	it("uses compact layout only below 40 frame-inclusive sidebar columns", () => {
+		const expandedConfig = { ...DEFAULT_CONFIG, showSidebarToolNames: true };
+		const compact = contentRows(renderSidebarLines(snapshot(), expandedConfig, theme, 39, 36, false));
+		expect(compact).toContain("◆ Working · gitifying");
+		expect(compact).toContain("gpt-5.6-sol");
+		expect(compact).not.toContainEqual(expect.stringMatching(/^◆ Working · gitifying\s+gpt-5\.6-sol$/));
+
+		for (const width of [40, 43, 44]) {
+			const regular = contentRows(renderSidebarLines(snapshot(), expandedConfig, theme, width, 36, false));
+			expect(regular).toContainEqual(expect.stringMatching(/^◆ Working · gitifying\s+gpt-5\.6-sol$/));
+			expect(regular).toContainEqual(expect.stringMatching(/^OPENAI-CODEX/));
+			expect(regular).toContainEqual(expect.stringMatching(/^8 \/ 12 active\s+▾$/));
+		}
 	});
 
 	it("renders a compact segmented context meter that adapts to width", () => {
