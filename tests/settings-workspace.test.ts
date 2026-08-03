@@ -30,6 +30,7 @@ function harness(
 			available: entry.id !== "tools",
 			visible: entry.visible,
 		})),
+	viewportHeight?: () => number,
 ) {
 	let layers: DisplayLayerState = structuredClone(initialLayers);
 	const render = vi.fn();
@@ -54,6 +55,7 @@ function harness(
 		},
 		getRenderConfig: () => renderConfig,
 		getSidebarPanelLayout: sidebarSettings,
+		...(viewportHeight ? { getViewportHeight: viewportHeight } : {}),
 		theme,
 		colorEnabled: false,
 		requestWorkspaceRender: render,
@@ -257,6 +259,46 @@ describe("Display Settings Workspace", () => {
 		expect(lines[previewStart + 1]).toContain("CRAFTING");
 		expect(lines[previewStart + 2]).toContain("└");
 		expect(lines.join("\n")).not.toContain("brand        ATELIER");
+	});
+
+	it("bounds the Display Settings frame to the live viewport without clipping its border", () => {
+		const h = harness({}, DEFAULT_CONFIG, undefined, () => 39);
+		const lines = h.component.render(126);
+		expect(lines).toHaveLength(39);
+		expect(lines[0]).toContain("╭");
+		expect(lines.at(-1)).toContain("╰");
+		expect(lines.every((line) => visibleWidth(line) <= 126)).toBe(true);
+	});
+
+	it("keeps the focused last Sidebar action visible while scrolling", () => {
+		const h = harness({}, DEFAULT_CONFIG, undefined, () => 39);
+		for (let index = 0; index < 100; index += 1) h.component.handleInput("\u001b[B");
+		const lines = h.component.render(126);
+		expect(lines.join("\n")).toContain("› Restore default");
+		expect(lines.at(-1)).toContain("╰");
+		expect(lines).toHaveLength(39);
+	});
+
+	it("shows deterministic scroll indicators and adapts to live viewport resizing", () => {
+		let viewport = 39;
+		const h = harness({}, DEFAULT_CONFIG, undefined, () => viewport);
+		for (let index = 0; index < 100; index += 1) h.component.handleInput("\u001b[B");
+		const bottom = h.component.render(126).join("\n");
+		expect(bottom).toContain("↑ more");
+		expect(bottom).not.toContain("↓ more");
+
+		viewport = 30;
+		const smaller = h.component.render(126);
+		expect(smaller).toHaveLength(30);
+		expect(smaller.join("\n")).toContain("› Restore default");
+		expect(smaller.join("\n")).toContain("↑ more");
+
+		viewport = 50;
+		const larger = h.component.render(126);
+		expect(larger).toHaveLength(50);
+		expect(larger.join("\n")).toContain("› Restore default");
+		expect(larger.join("\n")).not.toContain("↓ more");
+		expect(larger.every((line) => visibleWidth(line) <= 126)).toBe(true);
 	});
 
 	it("keeps value, provenance, and action shortcut columns fixed", () => {

@@ -14,7 +14,13 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import { saveUserConfig, saveUserConfigPatch } from "./config.js";
-import { createSettingsWorkspace, type SidebarPanelSetting } from "./settings-workspace.js";
+import {
+	DISPLAY_SETTINGS_OVERLAY_MARGIN,
+	DISPLAY_SETTINGS_OVERLAY_MAX_HEIGHT,
+	createSettingsWorkspace,
+	getDisplaySettingsViewportHeight,
+	type SidebarPanelSetting,
+} from "./settings-workspace.js";
 import { applyDisplayTemplate, reorderSegment, toggleSegmentVisibility } from "./display.js";
 import type { AtelierRuntime } from "./state.js";
 import type { AtelierConfig, Ornament, SegmentId, TemplateName } from "./types.js";
@@ -318,6 +324,7 @@ export async function openDisplaySettingsWorkspace(
 				persistUserDisplayPatch: (patch) => savePatch(userConfigPath, patch),
 				applySavedUserDisplayPatch: (patch) => runtime.applySavedUserDisplayPatch(patch),
 				getRenderConfig: () => runtime.getConfig(),
+				getViewportHeight: () => getDisplaySettingsViewportHeight(tui.terminal.rows),
 				theme,
 				colorEnabled: !("NO_COLOR" in process.env),
 				requestWorkspaceRender: () => tui.requestRender(),
@@ -329,7 +336,13 @@ export async function openDisplaySettingsWorkspace(
 			}),
 		{
 			overlay: true,
-			overlayOptions: { anchor: "center", width: "90%", minWidth: 36, maxHeight: "95%", margin: 1 },
+			overlayOptions: {
+				anchor: "center",
+				width: "90%",
+				minWidth: 36,
+				maxHeight: DISPLAY_SETTINGS_OVERLAY_MAX_HEIGHT,
+				margin: DISPLAY_SETTINGS_OVERLAY_MARGIN,
+			},
 		},
 	);
 }

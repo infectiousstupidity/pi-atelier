@@ -33,6 +33,20 @@ export interface SidebarPanelSetting {
 	visible: boolean;
 }
 
+export const DISPLAY_SETTINGS_OVERLAY_MAX_HEIGHT = "95%" as const;
+export const DISPLAY_SETTINGS_OVERLAY_MARGIN = 1;
+
+/**
+ * Match Pi TUI's overlay max-height calculation for Display Settings.
+ * Percentages are floored and the one-cell margin is applied on both sides.
+ */
+export function getDisplaySettingsViewportHeight(terminalRows: number): number {
+	const rows = Number.isFinite(terminalRows) ? Math.max(0, Math.floor(terminalRows)) : 0;
+	const availableHeight = Math.max(1, rows - DISPLAY_SETTINGS_OVERLAY_MARGIN * 2);
+	const maxHeight = Math.floor((rows * 95) / 100);
+	return Math.max(1, Math.min(maxHeight, availableHeight));
+}
+
 export interface SettingsWorkspaceOptions {
 	getDisplaySettings(): DisplaySettings;
 	getDisplayProvenance(): DisplayProvenance;
@@ -45,6 +59,8 @@ export interface SettingsWorkspaceOptions {
 	getPreviewState?(): FooterState;
 	getSidebarPanelLayout?(): readonly SidebarPanelSetting[];
 	getSidebarPreview?(): readonly string[];
+	/** Live overlay viewport height in rows; omitted direct callers keep full rendering. */
+	getViewportHeight?(): number;
 	theme: ThemeLike;
 	colorEnabled?: boolean;
 	requestWorkspaceRender(): void;
@@ -156,16 +172,34 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 	let lastUndo: "display" | "sidebar" | undefined;
 	let feedback = "";
 	let saving = false;
+	let scrollOffset = 0;
+
+	const buildRows = (): Row[] => [
+		...DISPLAY_KEYS.map((id) => ({ kind: id, id }) as Row),
+		...display.segmentLayout.map((entry) => ({ kind: "segment", id: entry.id }) as Row),
+		{ kind: "action", id: "save" },
+		{ kind: "action", id: "revert" },
+		{ kind: "action", id: "undo" },
+		...sidebarDraft.map((entry) => ({ kind: "sidebarPanel", id: entry.id }) as Row),
+		{ kind: "action", id: "sidebar-default" },
+	];
 
 	/** Keep unavailable configured entries in place and append newly discovered panels. */
 	const syncSidebarDraft = (): void => {
 		const available = options.getSidebarPanelLayout?.();
 		if (!available) return;
+		const focusedRow = buildRows()[focus];
 		const configuredIds = new Set(sidebarDraft.map((entry) => entry.id));
 		for (const setting of available) {
 			if (!isSidebarPanelId(setting.id) || configuredIds.has(setting.id)) continue;
 			configuredIds.add(setting.id);
 			sidebarDraft.push({ id: setting.id, visible: false });
+		}
+		if (focusedRow) {
+			const nextFocus = buildRows().findIndex(
+				(row) => row.kind === focusedRow.kind && row.id === focusedRow.id,
+			);
+			if (nextFocus >= 0) focus = nextFocus;
 		}
 	};
 	const sidebarSettings = (): SidebarPanelSetting[] => {
@@ -186,15 +220,7 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 	};
 	const rows = (): Row[] => {
 		syncSidebarDraft();
-		return [
-			...DISPLAY_KEYS.map((id) => ({ kind: id, id }) as Row),
-			...display.segmentLayout.map((entry) => ({ kind: "segment", id: entry.id }) as Row),
-			{ kind: "action", id: "save" },
-			{ kind: "action", id: "revert" },
-			{ kind: "action", id: "undo" },
-			...sidebarDraft.map((entry) => ({ kind: "sidebarPanel", id: entry.id }) as Row),
-			{ kind: "action", id: "sidebar-default" },
-		];
+		return buildRows();
 	};
 	const rowIndex = (target: Row, allRows = rows()): number =>
 		allRows.findIndex((row) => row.kind === target.kind && row.id === target.id);
@@ -518,11 +544,67 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 				fit(guidance, outerInner),
 			];
 			const border = (text: string) => options.theme.fg("borderAccent", text);
-			return [
-				border(`╭${"─".repeat(outerInner)}╮`),
-				...content.map((line) => `${border("│")}${fit(line, outerInner)}${border("│")}`),
-				border(`╰${"─".repeat(outerInner)}╯`),
-			].map((line) => truncateToWidth(line, width, ""));
+			const frame = (lines: string[]): string[] =>
+				[
+					border(`╭${"─".repeat(outerInner)}╮`),
+					...lines.map((line) => `${border("│")}${fit(line, outerInner)}${border("│")}`),
+					border(`╰${"─".repeat(outerInner)}╯`),
+				].map((line) => truncateToWidth(line, width, ""));
+
+			const viewportHeight = options.getViewportHeight?.();
+			if (viewportHeight === undefined || !Number.isFinite(viewportHeight)) return frame(content);
+
+			// Keep the heading, global key hints, and contextual guidance fixed. Only the
+			// central preview/editor content is virtualized so the frame is never clipped.
+			const height = Math.max(2, Math.floor(viewportHeight));
+			const fixedTop = content.slice(0, 2);
+			const fixedBottom = content.slice(-1);
+			const central = content.slice(2, -1);
+			while (central.at(-1) === "") central.pop();
+			const centralRows = Math.max(0, height - fixedTop.length - fixedBottom.length - 2);
+			const centralCapacity = Math.max(0, centralRows - 2);
+			const selectedEditingLine = editing.findIndex((line) => line.includes("›"));
+			const editingStart = 3 + preview.length + 1;
+			const selectedCentralLine = Math.max(0, editingStart + Math.max(0, selectedEditingLine) - 2);
+			const overflowing = central.length > centralRows;
+			let bodyCapacity = overflowing ? Math.max(1, centralCapacity) : Math.max(0, centralRows);
+
+			if (!overflowing) {
+				scrollOffset = 0;
+			} else {
+				let maxOffset = Math.max(0, central.length - bodyCapacity);
+				scrollOffset = Math.max(0, Math.min(scrollOffset, maxOffset));
+				if (selectedCentralLine < scrollOffset) scrollOffset = selectedCentralLine;
+				else if (selectedCentralLine >= scrollOffset + bodyCapacity)
+					scrollOffset = selectedCentralLine - bodyCapacity + 1;
+
+				// If the selected row is in the tail, prefer the bottom edge so the
+				// trailing panel border can share the viewport with it.
+				const bottomCapacity = Math.max(1, centralRows - 1);
+				const bottomOffset = Math.max(0, central.length - bottomCapacity);
+				if (selectedCentralLine >= bottomOffset) scrollOffset = bottomOffset;
+
+				maxOffset = Math.max(0, central.length - bodyCapacity);
+				scrollOffset = Math.max(0, Math.min(scrollOffset, maxOffset));
+				const atTop = scrollOffset === 0;
+				const atBottom = scrollOffset === bottomOffset && selectedCentralLine >= bottomOffset;
+				bodyCapacity = Math.max(1, centralRows - (atTop ? 0 : 1) - (atBottom ? 0 : 1));
+				maxOffset = Math.max(0, central.length - bodyCapacity);
+				scrollOffset = Math.max(0, Math.min(scrollOffset, maxOffset));
+			}
+
+			const body = central.slice(scrollOffset, scrollOffset + bodyCapacity);
+			const hasMoreAbove = overflowing && scrollOffset > 0;
+			const hasMoreBelow = overflowing && scrollOffset + body.length < central.length;
+			const centralLines = overflowing
+				? [
+						hasMoreAbove ? fit("↑ more", outerInner) : "",
+						...body,
+						hasMoreBelow ? fit("↓ more", outerInner) : "",
+					]
+				: body;
+			while (centralLines.length < centralRows) centralLines.push("");
+			return frame([...fixedTop, ...centralLines, ...fixedBottom].slice(0, Math.max(0, height - 2)));
 		},
 	};
 }

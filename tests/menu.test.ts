@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { resolveDisplayLayers } from "../src/config.js";
 
 const rootMenuItems = vi.hoisted(() => [] as Array<Array<Record<string, unknown>>>);
 vi.mock("@earendil-works/pi-tui", async (importOriginal) => {
@@ -24,6 +25,7 @@ import {
 	type SidebarControls,
 } from "../src/menu.js";
 import { DEFAULT_CONFIG, type DisplayPatch } from "../src/types.js";
+import { getDisplaySettingsViewportHeight } from "../src/settings-workspace.js";
 
 function harness() {
 	let config = {
@@ -37,6 +39,19 @@ function harness() {
 			density: config.density,
 			segmentLayout: config.segmentLayout.map((entry) => ({ ...entry })),
 		})),
+		getDisplayProvenance: vi.fn(() => resolveDisplayLayers({}).provenance),
+		getSessionDisplayOverride: vi.fn(() => undefined),
+		replaceSessionDisplayOverride: vi.fn(),
+		clearSessionDisplayOverride: vi.fn(),
+		applySavedUserDisplayPatch: vi.fn(),
+		getSidebarPanelSettings: vi.fn(() =>
+			DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => ({
+				id: entry.id,
+				title: entry.id,
+				available: true,
+				visible: entry.visible,
+			})),
+		),
 		setSessionDisplayPatch: vi.fn((patch: DisplayPatch) => {
 			config = { ...config, ...patch };
 			config.preset = derivePresetIdentity(config);
@@ -74,7 +89,11 @@ function harness() {
 }
 
 describe("Control Center presentation", () => {
-	function contextWithSelections(values: string[]) {
+	function contextWithSelections(
+		values: string[],
+		terminal: { columns: number; rows: number } = { columns: 140, rows: 42 },
+		customComponents: unknown[] = [],
+	) {
 		return {
 			mode: "tui",
 			model: { id: "old", provider: "provider" },
@@ -85,15 +104,17 @@ describe("Control Center presentation", () => {
 				notify: vi.fn(),
 				custom: vi.fn((factory: (...args: any[]) => unknown, _options?: unknown) => {
 					const value = values.shift();
-					factory(
-						{ requestRender: vi.fn() },
-						{
-							fg: (_color: string, text: string) => text,
-							bold: (text: string) => text,
-							italic: (text: string) => text,
-						},
-						{},
-						vi.fn(),
+					customComponents.push(
+						factory(
+							{ requestRender: vi.fn(), terminal },
+							{
+								fg: (_color: string, text: string) => text,
+								bold: (text: string) => text,
+								italic: (text: string) => text,
+							},
+							{},
+							vi.fn(),
+						),
 					);
 					return Promise.resolve(value);
 				}),
@@ -165,6 +186,43 @@ describe("Control Center presentation", () => {
 			overlay: true,
 			overlayOptions: expect.objectContaining({ width: "90%" }),
 		});
+	});
+
+	it("derives the workspace viewport from live terminal rows and Pi overlay rounding", async () => {
+		rootMenuItems.length = 0;
+		const terminal = { columns: 140, rows: 42 };
+		const customComponents: unknown[] = [];
+		const ctx = contextWithSelections(
+			["settings", "display", "workspace-close", "back", "close"],
+			terminal,
+			customComponents,
+		);
+		const sidebar: SidebarControls = {
+			isVisible: vi.fn(() => true),
+			toggle: vi.fn(),
+			isToolListExpanded: vi.fn(() => false),
+			toggleToolList: vi.fn().mockResolvedValue(undefined),
+		};
+		await openAtelierControlCenter(
+			{} as never,
+			ctx as never,
+			harness().runtime as never,
+			"/tmp/user.json",
+			sidebar,
+		);
+		const workspace = customComponents[2] as { render(width: number): string[] };
+		expect(ctx.ui.custom.mock.calls[2]?.[1]).toMatchObject({
+			overlay: true,
+			overlayOptions: expect.objectContaining({ maxHeight: "95%", margin: 1 }),
+		});
+		expect(getDisplaySettingsViewportHeight(42)).toBe(39);
+		expect(getDisplaySettingsViewportHeight(30)).toBe(28);
+		expect(getDisplaySettingsViewportHeight(50)).toBe(47);
+		expect(workspace.render(126)).toHaveLength(39);
+		terminal.rows = 30;
+		expect(workspace.render(126)).toHaveLength(28);
+		terminal.rows = 50;
+		expect(workspace.render(126)).toHaveLength(47);
 	});
 
 	it("keeps Sidebar visibility in Controls and session-scoped", async () => {

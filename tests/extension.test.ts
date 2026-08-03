@@ -479,12 +479,13 @@ describe("extension registration", () => {
 				await command(h, "display");
 				const workspace = h.overlays.at(-1)?.component;
 				const rendered = workspace?.render(120).join("\n") ?? "";
-				expect(rendered).toContain("Queue title");
 				expect(rendered).toContain("vendor:missing");
-				expect(rendered).toContain("unavailable");
 
 				// Two display rows, nine segments, and three actions precede configured panels.
 				for (let index = 0; index < 14 + 9; index += 1) workspace?.handleInput("\u001b[B");
+				const focusedRendered = workspace?.render(120).join("\n") ?? "";
+				expect(focusedRendered).toContain("Queue title");
+				expect(focusedRendered).toContain("unavailable");
 				workspace?.handleInput(" ");
 				workspace?.handleInput("s");
 				await vi.waitFor(() => expect(h.saveConfigPatch).toHaveBeenCalled());
