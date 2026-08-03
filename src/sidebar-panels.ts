@@ -16,6 +16,12 @@ export const SIDEBAR_PANEL_MAX_TITLE_CHARS = 48;
 export const SIDEBAR_PANEL_MAX_ROWS = 24;
 /** Maximum visible characters retained for one contributed row. */
 export const SIDEBAR_PANEL_MAX_ROW_CHARS = 160;
+/** Maximum characters accepted for a namespaced contributed panel ID. */
+export const SIDEBAR_PANEL_MAX_ID_CHARS = 128;
+/** Maximum characters accepted for a contributed panel source name. */
+export const SIDEBAR_PANEL_MAX_SOURCE_CHARS = 128;
+/** Maximum contributed panels retained by one registry. */
+export const SIDEBAR_PANEL_MAX_PANELS = 64;
 
 /** Built-in panels remain available even when their optional content is empty. */
 export const BUILTIN_SIDEBAR_PANEL_IDS = [
@@ -144,7 +150,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function isSidebarPanelId(value: unknown): value is SidebarPanelId {
-	return typeof value === "string" && (BUILTIN_IDS.has(value) || NAMESPACED_ID.test(value));
+	return (
+		typeof value === "string" &&
+		(BUILTIN_IDS.has(value) || (value.length <= SIDEBAR_PANEL_MAX_ID_CHARS && NAMESPACED_ID.test(value)))
+	);
+}
+
+/** Validate the source name retained with a contributed panel and its events. */
+export function isSidebarPanelSource(value: unknown): value is string {
+	return typeof value === "string" && value.length <= SIDEBAR_PANEL_MAX_SOURCE_CHARS && value.trim() !== "";
 }
 
 export function isSidebarPanelRole(value: unknown): value is SidebarPanelRole {
@@ -301,23 +315,33 @@ export function createSidebarPanelRegistry(options: SidebarPanelRegistryOptions 
 		revisions.set(source, revision);
 		return true;
 	};
-	const register = (panel: SidebarPanelContribution, source = sourceFor(panel.id)): boolean => {
-		if (disposed || typeof source !== "string" || source.trim() === "") return false;
+	const register = (panel: SidebarPanelContribution, source?: string): boolean => {
+		if (disposed) return false;
 		const safe = sanitizeContribution(panel);
 		if (!safe || !safe.id.includes(":")) return false;
+		const resolvedSource = source ?? sourceFor(safe.id);
+		if (!isSidebarPanelSource(resolvedSource)) return false;
 		const owner = owners.get(safe.id);
-		if (owner && owner !== source) return false;
-		owners.set(safe.id, source);
-		const next: SidebarPanelData = { ...safe, rows: safe.rows as SidebarPanelRow[], available: true, source };
+		if (owner && owner !== resolvedSource) return false;
+		if (!panels.has(safe.id) && panels.size >= SIDEBAR_PANEL_MAX_PANELS) return false;
+		owners.set(safe.id, resolvedSource);
+		const next: SidebarPanelData = {
+			...safe,
+			rows: safe.rows as SidebarPanelRow[],
+			available: true,
+			source: resolvedSource,
+		};
 		const previous = panels.get(safe.id);
 		if (previous && sidebarPanelDataEqual(previous, next)) return false;
 		panels.set(safe.id, next);
 		changed();
 		return true;
 	};
-	const unregister = (id: SidebarPanelId, source = sourceFor(id)): boolean => {
-		if (disposed || !isSidebarPanelId(id) || typeof source !== "string" || source.trim() === "") return false;
-		if (owners.get(id) !== source) return false;
+	const unregister = (id: SidebarPanelId, source?: string): boolean => {
+		if (disposed || !isSidebarPanelId(id)) return false;
+		const resolvedSource = source ?? sourceFor(id);
+		if (!isSidebarPanelSource(resolvedSource)) return false;
+		if (owners.get(id) !== resolvedSource) return false;
 		owners.delete(id);
 		const removed = panels.delete(id);
 		changed();
@@ -327,8 +351,7 @@ export function createSidebarPanelRegistry(options: SidebarPanelRegistryOptions 
 		if (disposed || !isEvent(data)) return;
 		if (typeof data.source === "string" && options.instanceId && data.source === options.instanceId) return;
 		if (data.type === "discover") return;
-		if (typeof data.source !== "string" || data.source.trim() === "" || !Number.isSafeInteger(data.revision))
-			return;
+		if (!isSidebarPanelSource(data.source) || !Number.isSafeInteger(data.revision)) return;
 		let panel: SidebarPanelContribution | undefined;
 		if (data.type === "register") {
 			panel = sanitizeContribution(data.panel);
@@ -391,12 +414,17 @@ export function registerSidebarPanel(
 	panel: SidebarPanelContribution,
 	options: { source?: string } = {},
 ): { update(panel: SidebarPanelContribution): void; dispose(): void } {
-	const source = options.source ?? sourceFor(panel.id);
-	const stableId = panel.id;
-	let current = { ...panel, id: stableId };
+	const initial = sanitizeContribution(panel);
+	const stableId = initial?.id && initial.id.includes(":") ? initial.id : undefined;
+	const requestedSource = options.source ?? (stableId ? sourceFor(stableId) : undefined);
+	const source =
+		stableId && requestedSource !== undefined && isSidebarPanelSource(requestedSource)
+			? requestedSource
+			: undefined;
+	let current = source && stableId && initial ? initial : undefined;
 	let disposed = false;
 	const emitRegister = (requestId?: string): void => {
-		if (disposed) return;
+		if (disposed || !source || !current) return;
 		const revision = nextSidebarPanelRevision(pi.events, source);
 		pi.events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
 			version: SIDEBAR_PANEL_PROTOCOL_VERSION,
@@ -407,23 +435,29 @@ export function registerSidebarPanel(
 			...(requestId ? { requestId } : {}),
 		});
 	};
-	const unsubscribe = pi.events.on(SIDEBAR_PANEL_EVENT_CHANNEL, (data) => {
-		if (!isEvent(data) || data.type !== "discover" || typeof data.requestId !== "string") return;
-		emitRegister(data.requestId);
-	});
-	emitRegister();
+	const unsubscribe = source
+		? pi.events.on(SIDEBAR_PANEL_EVENT_CHANNEL, (data) => {
+				if (!isEvent(data) || data.type !== "discover" || typeof data.requestId !== "string") return;
+				emitRegister(data.requestId);
+			})
+		: () => undefined;
+	if (current) emitRegister();
 	return {
 		update(next) {
-			if (disposed) return;
+			if (disposed || !source || !stableId) return;
+			const safe = sanitizeContribution(next);
 			// A publisher owns one stable ID for its whole lifetime. Ignore an
-			// attempted ID change rather than orphaning the previous registration.
-			current = { ...next, id: stableId };
+			// invalid payload, but preserve the historical behavior of treating
+			// an attempted ID change as an update to that stable ID.
+			if (!safe) return;
+			current = { ...safe, id: stableId };
 			emitRegister();
 		},
 		dispose() {
 			if (disposed) return;
 			disposed = true;
 			unsubscribe();
+			if (!source || !current) return;
 			pi.events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
 				version: SIDEBAR_PANEL_PROTOCOL_VERSION,
 				type: "unregister",

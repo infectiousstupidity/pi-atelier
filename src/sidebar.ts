@@ -36,6 +36,10 @@ export {
 	SIDEBAR_PANEL_MAX_TITLE_CHARS,
 	SIDEBAR_PANEL_MAX_ROWS,
 	SIDEBAR_PANEL_MAX_ROW_CHARS,
+	SIDEBAR_PANEL_MAX_ID_CHARS,
+	SIDEBAR_PANEL_MAX_SOURCE_CHARS,
+	SIDEBAR_PANEL_MAX_PANELS,
+	isSidebarPanelSource,
 } from "./sidebar-panels.js";
 export type {
 	SidebarPanelContribution,

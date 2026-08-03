@@ -12,6 +12,10 @@ import {
 	SIDEBAR_PANEL_MAX_ROW_CHARS,
 	SIDEBAR_PANEL_MAX_ROWS,
 	SIDEBAR_PANEL_MAX_TITLE_CHARS,
+	SIDEBAR_PANEL_MAX_ID_CHARS,
+	SIDEBAR_PANEL_MAX_SOURCE_CHARS,
+	SIDEBAR_PANEL_MAX_PANELS,
+	isSidebarPanelId,
 } from "../src/sidebar.js";
 import { DEFAULT_SIDEBAR_WIDTH } from "../src/split-pane.js";
 import { type AtelierState, DEFAULT_CONFIG } from "../src/types.js";
@@ -370,6 +374,115 @@ describe("sidebar snapshot and layout", () => {
 			}),
 		).toBe(false);
 		expect(registry.getAvailable()).toHaveLength(1);
+		registry.dispose();
+	});
+
+	it("bounds IDs and source names at direct, event, and publisher seams", () => {
+		const registry = createSidebarPanelRegistry();
+		const longId = `vendor:${"x".repeat(SIDEBAR_PANEL_MAX_ID_CHARS)}` as `vendor:${string}`;
+		const longSource = "s".repeat(SIDEBAR_PANEL_MAX_SOURCE_CHARS + 1);
+		const safePanel = { id: "vendor:safe" as const, title: "Safe", rows: [] };
+
+		expect(isSidebarPanelId(longId)).toBe(false);
+		expect(registry.register({ ...safePanel, id: longId })).toBe(false);
+		expect(registry.unregister(longId, "vendor")).toBe(false);
+		expect(registry.register(safePanel, longSource)).toBe(false);
+		expect(registry.unregister(safePanel.id, longSource)).toBe(false);
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "vendor",
+			revision: 1,
+			panel: { ...safePanel, id: longId },
+		});
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: longSource,
+			revision: 1,
+			panel: safePanel,
+		});
+		expect(registry.getAvailable()).toEqual([]);
+
+		const emitted: unknown[] = [];
+		const events = {
+			on: () => () => undefined,
+			emit: (_channel: string, data: unknown) => emitted.push(data),
+		};
+		const invalidIdPublisher = registerSidebarPanel({ events }, { ...safePanel, id: longId });
+		const invalidSourcePublisher = registerSidebarPanel({ events }, safePanel, { source: longSource });
+		expect(emitted).toEqual([]);
+		invalidIdPublisher.update(safePanel);
+		invalidSourcePublisher.update(safePanel);
+		invalidIdPublisher.dispose();
+		invalidSourcePublisher.dispose();
+		expect(emitted).toEqual([]);
+		registry.dispose();
+	});
+
+	it("caps new panels while allowing updates and unregisters to free capacity", () => {
+		const registry = createSidebarPanelRegistry();
+		const panel = (id: string, title = id) => ({
+			id: id as `vendor:${string}`,
+			title,
+			rows: [],
+		});
+		for (let index = 0; index < SIDEBAR_PANEL_MAX_PANELS; index += 1) {
+			expect(registry.register(panel(`vendor:panel-${index}`))).toBe(true);
+		}
+		expect(registry.getAvailable()).toHaveLength(SIDEBAR_PANEL_MAX_PANELS);
+		expect(registry.register(panel("vendor:overflow"), "overflow")).toBe(false);
+
+		// A valid update at capacity is accepted and consumes its source revision.
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "vendor",
+			revision: 1,
+			panel: panel("vendor:panel-0", "Updated at capacity"),
+		});
+		expect(registry.get("vendor:panel-0")?.title).toBe("Updated at capacity");
+
+		// Rejected new registrations still consume a valid event revision, so
+		// replaying it after capacity is freed is deterministic.
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "overflow",
+			revision: 1,
+			panel: panel("vendor:overflow", "Overflow"),
+		});
+		expect(registry.get("vendor:overflow")).toBeUndefined();
+		registry.handleEvent({
+			version: 1,
+			type: "unregister",
+			source: "vendor",
+			revision: 2,
+			id: "vendor:panel-0",
+		});
+		expect(registry.get("vendor:panel-0")).toBeUndefined();
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "overflow",
+			revision: 1,
+			panel: panel("vendor:overflow", "Stale retry"),
+		});
+		expect(registry.get("vendor:overflow")).toBeUndefined();
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "overflow",
+			revision: 2,
+			panel: panel("vendor:overflow", "Accepted after unregister"),
+		});
+		expect(registry.get("vendor:overflow")?.title).toBe("Accepted after unregister");
+		expect(registry.getAvailable()).toHaveLength(SIDEBAR_PANEL_MAX_PANELS);
+
+		// The direct seam gets the same capacity behavior after an unregister.
+		expect(registry.unregister("vendor:panel-1", "vendor")).toBe(true);
+		expect(registry.register(panel("vendor:direct"), "vendor")).toBe(true);
+		expect(registry.getAvailable()).toHaveLength(SIDEBAR_PANEL_MAX_PANELS);
 		registry.dispose();
 	});
 
