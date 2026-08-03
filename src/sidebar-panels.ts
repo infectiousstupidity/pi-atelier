@@ -268,15 +268,23 @@ function isEvent(value: unknown): value is Record<string, unknown> {
 // of an individual publisher. Keep the allocator scoped to each transport so
 // separate Pi runtimes (and test buses) cannot affect one another, while the
 // weak key avoids retaining an event bus after its runtime is gone.
+//
+// Source entries are bounded tombstones: disposed publishers keep their last
+// revision so a later publisher reusing that source cannot reset to one and
+// resurrect stale events. A new source beyond the cap becomes an inert
+// publisher because this API cannot report allocation failure to its caller.
 const sidebarPanelRevisionAllocators = new WeakMap<object, Map<string, number>>();
 
-function nextSidebarPanelRevision(events: SidebarPanelEventTransport, source: string): number {
+function nextSidebarPanelRevision(events: SidebarPanelEventTransport, source: string): number | undefined {
+	if (!isSidebarPanelSource(source)) return undefined;
 	let revisions = sidebarPanelRevisionAllocators.get(events);
 	if (!revisions) {
 		revisions = new Map<string, number>();
 		sidebarPanelRevisionAllocators.set(events, revisions);
 	}
-	const next = (revisions.get(source) ?? 0) + 1;
+	const previous = revisions.get(source);
+	if (previous === undefined && revisions.size >= SIDEBAR_PANEL_MAX_TRACKED_SOURCES) return undefined;
+	const next = (previous ?? 0) + 1;
 	revisions.set(source, next);
 	return next;
 }
@@ -447,6 +455,7 @@ export function registerSidebarPanel(
 	const emitRegister = (requestId?: string): void => {
 		if (disposed || !source || !current) return;
 		const revision = nextSidebarPanelRevision(pi.events, source);
+		if (revision === undefined) return;
 		pi.events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
 			version: SIDEBAR_PANEL_PROTOCOL_VERSION,
 			type: "register",
@@ -479,11 +488,13 @@ export function registerSidebarPanel(
 			disposed = true;
 			unsubscribe();
 			if (!source || !current) return;
+			const revision = nextSidebarPanelRevision(pi.events, source);
+			if (revision === undefined) return;
 			pi.events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
 				version: SIDEBAR_PANEL_PROTOCOL_VERSION,
 				type: "unregister",
 				source,
-				revision: nextSidebarPanelRevision(pi.events, source),
+				revision,
 				id: current.id,
 			});
 		},

@@ -265,6 +265,70 @@ describe("sidebar snapshot and layout", () => {
 		registry.dispose();
 	});
 
+	it("caps helper publisher sources while preserving updates, disposal, and source revisions", () => {
+		const listeners = new Set<(data: unknown) => void>();
+		const emitted: unknown[] = [];
+		const events = {
+			on: (_channel: string, handler: (data: unknown) => void) => {
+				listeners.add(handler);
+				return () => listeners.delete(handler);
+			},
+			emit: (_channel: string, data: unknown) => {
+				emitted.push(data);
+				for (const listener of [...listeners]) listener(data);
+			},
+		};
+		const panel = (id: string, title = id) => ({
+			id: id as `${string}:${string}`,
+			title,
+			rows: [],
+		});
+		const malformed = registerSidebarPanel({ events }, panel("vendor:malformed-source"), {
+			source: "s".repeat(SIDEBAR_PANEL_MAX_SOURCE_CHARS + 1),
+		});
+		malformed.update(panel("vendor:malformed-source", "Should stay inert"));
+		malformed.dispose();
+		expect(emitted).toEqual([]);
+		const publishers = Array.from({ length: SIDEBAR_PANEL_MAX_TRACKED_SOURCES }, (_, index) =>
+			registerSidebarPanel({ events }, panel(`vendor:allocator-${index}`), { source: `allocator-${index}` }),
+		);
+		const registry = createSidebarPanelRegistry({ events });
+		expect(registry.getAvailable()).toHaveLength(SIDEBAR_PANEL_MAX_TRACKED_SOURCES);
+
+		const beforeOverflow = emitted.length;
+		const overflow = registerSidebarPanel({ events }, panel("vendor:allocator-overflow"), {
+			source: "allocator-overflow",
+		});
+		overflow.update(panel("vendor:allocator-overflow", "Updated overflow"));
+		overflow.dispose();
+		expect(emitted).toHaveLength(beforeOverflow);
+		expect(registry.get("vendor:allocator-overflow")).toBeUndefined();
+
+		publishers[0]?.update(panel("vendor:allocator-0", "Updated tracked"));
+		expect(registry.get("vendor:allocator-0")?.title).toBe("Updated tracked");
+		publishers[0]?.dispose();
+		expect(registry.get("vendor:allocator-0")).toBeUndefined();
+
+		const reused = registerSidebarPanel({ events }, panel("vendor:allocator-reused", "Reused source"), {
+			source: "allocator-0",
+		});
+		expect(registry.get("vendor:allocator-reused")?.title).toBe("Reused source");
+		const reusedRevision = (emitted.at(-1) as { revision?: number })?.revision;
+		expect(reusedRevision).toBeGreaterThan(1);
+		events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
+			version: 1,
+			type: "register",
+			source: "allocator-0",
+			revision: (reusedRevision ?? 1) - 1,
+			panel: panel("vendor:allocator-reused", "Stale reuse"),
+		});
+		expect(registry.get("vendor:allocator-reused")?.title).toBe("Reused source");
+		reused.dispose();
+		expect(registry.get("vendor:allocator-reused")).toBeUndefined();
+		for (const publisher of publishers.slice(1)) publisher.dispose();
+		registry.dispose();
+	});
+
 	it("rejects malformed public events and preserves panel ownership across revisions", () => {
 		const registry = createSidebarPanelRegistry();
 		for (const event of [
