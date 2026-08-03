@@ -45,10 +45,14 @@ export {
 	SIDEBAR_PANEL_MAX_ROW_CHARS,
 	SIDEBAR_PANEL_MAX_ROWS,
 	SIDEBAR_PANEL_MAX_TITLE_CHARS,
+	SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS,
+	SIDEBAR_PANEL_MAX_RAW_ROW_CODE_UNITS,
 	SIDEBAR_PANEL_MAX_ID_CHARS,
 	SIDEBAR_PANEL_MAX_SOURCE_CHARS,
 	SIDEBAR_PANEL_MAX_PANELS,
 	SIDEBAR_PANEL_MAX_TRACKED_SOURCES,
+	isSidebarPanelContributionId,
+	isSidebarPanelTextWithinRawLimit,
 	isSidebarPanelSource,
 } from "../src/sidebar-panels.js";
 export type {
@@ -57,6 +61,8 @@ export type {
 	SidebarPanelEvent,
 	SidebarPanelEventTransport,
 	SidebarPanelRegistry,
+	SidebarPanelRow,
+	SidebarPanelRole,
 } from "../src/sidebar-panels.js";
 
 export interface AtelierExtensionDependencies {

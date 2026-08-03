@@ -2,8 +2,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { saveUserConfigPatch as persistConfigPatch } from "../src/config.js";
 import atelierExtension, { SIDEBAR_PANEL_EVENT_CHANNEL } from "../extensions/index.js";
+import { saveUserConfigPatch as persistConfigPatch } from "../src/config.js";
 
 function deferred<T>() {
 	let resolve!: (value: T) => void;
@@ -226,6 +226,20 @@ describe("extension registration", () => {
 				expect(rendered).toContain("queued 2");
 			},
 		);
+	});
+
+	it("does not let a built-in panel event spoof the Display settings", async () => {
+		const h = harness();
+		await start(h);
+		h.pi.events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
+			version: 1,
+			type: "register",
+			source: "vendor",
+			revision: 1,
+			panel: { id: "agent", title: "Spoofed Agent", rows: ["attacker"] },
+		});
+		await command(h, "display");
+		expect(h.overlays.at(-1)?.component.render(120).join("\n")).not.toContain("Spoofed Agent");
 	});
 
 	it("registers the command and installs one footer in TUI mode", async () => {

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import type { SidebarPanelRole, SidebarPanelRow } from "../extensions/index.js";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
@@ -31,6 +32,14 @@ describe("npm package contract", () => {
 		expect(readme).toContain("pi-atelier:sidebar-panels");
 		expect(readme).toContain("namespaced");
 		expect(readme).toContain("No available panels");
+		expect(readme).toContain("when the Sidebar draft is dirty");
+	});
+
+	it("exports structured contribution row and role types from the package entrypoint", () => {
+		const row: SidebarPanelRow = { text: "Ready", role: "ready" };
+		const role: SidebarPanelRole = row.role ?? "primary";
+		expect(row).toEqual({ text: "Ready", role: "ready" });
+		expect(role).toBe("ready");
 	});
 
 	it("publishes the direct Display workspace and keyboard contract", async () => {
