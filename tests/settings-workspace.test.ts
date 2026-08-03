@@ -270,6 +270,57 @@ describe("Display Settings Workspace", () => {
 		expect(lines.every((line) => visibleWidth(line) <= 126)).toBe(true);
 	});
 
+	it.each([0, 1, 2, 3, 4])("keeps every line within a tiny viewport of %s rows", (viewport) => {
+		const h = harness({}, DEFAULT_CONFIG, undefined, () => viewport);
+		const lines = h.component.render(126);
+		expect(lines).toHaveLength(viewport);
+		expect(lines.every((line) => visibleWidth(line) <= 126)).toBe(true);
+		if (viewport >= 2) {
+			expect(lines[0]).toContain("╭");
+			expect(lines.at(-1)).toContain("╰");
+		} else {
+			expect(lines.join("\n")).not.toContain("╭");
+		}
+	});
+
+	it("keeps top, middle, and bottom scroll states structurally focused", () => {
+		const top = harness({}, DEFAULT_CONFIG, undefined, () => 39);
+		const topLines = text(top.component);
+		expect(topLines).toContain("↓ more");
+		expect(topLines).not.toContain("↑ more");
+
+		const middle = harness({}, DEFAULT_CONFIG, undefined, () => 15);
+		const middleLines = text(middle.component);
+		expect(middleLines).toContain("↑ more");
+		expect(middleLines).toContain("↓ more");
+
+		for (let index = 0; index < 100; index += 1) middle.component.handleInput("\u001b[B");
+		const bottomLines = text(middle.component);
+		expect(bottomLines).toContain("↑ more");
+		expect(bottomLines).not.toContain("↓ more");
+	});
+
+	it("does not treat a contributed title containing the focus glyph as the focused row", () => {
+		const h = harness(
+			{},
+			DEFAULT_CONFIG,
+			() =>
+				DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => ({
+					id: entry.id,
+					title: entry.id === "agent" ? "Contributed › title" : entry.id,
+					available: true,
+					visible: entry.visible,
+				})),
+			() => 39,
+		);
+		for (let index = 0; index < 100; index += 1) h.component.handleInput("\u001b[B");
+		const lines = h.component.render(126);
+		expect(lines.join("\n")).toContain("Contributed › title");
+		expect(lines.join("\n")).toContain("› Restore default");
+		expect(lines).toHaveLength(39);
+		expect(lines.every((line) => visibleWidth(line) <= 126)).toBe(true);
+	});
+
 	it("keeps the focused last Sidebar action visible while scrolling", () => {
 		const h = harness({}, DEFAULT_CONFIG, undefined, () => 39);
 		for (let index = 0; index < 100; index += 1) h.component.handleInput("\u001b[B");

@@ -155,6 +155,34 @@ function panel(title: string, lines: string[], width: number, theme: ThemeLike, 
 	];
 }
 
+interface LayoutLine {
+	line: string;
+	/** True only for the line that structurally represents the focused row. */
+	focused?: boolean;
+}
+
+function panelWithFocus(
+	title: string,
+	lines: readonly LayoutLine[],
+	width: number,
+	theme: ThemeLike,
+): LayoutLine[] {
+	const withFocus = (line: string, focused: boolean | undefined): LayoutLine =>
+		focused === undefined ? { line } : { line, focused };
+	if (width < 4) return lines.map(({ line, focused }) => withFocus(fit(line, width), focused));
+	const inner = width - 2;
+	const edge = (text: string) => theme.fg("muted", text);
+	const heading = ` ${title} `;
+	const rule = Math.max(0, inner - visibleWidth(heading));
+	return [
+		{
+			line: `${edge("┌")}${theme.bold(theme.fg("muted", heading))}${edge("─".repeat(rule))}${edge("┐")}`,
+		},
+		...lines.map(({ line, focused }) => withFocus(`${edge("│")}${fit(line, inner)}${edge("│")}`, focused)),
+		{ line: `${edge("└")}${edge("─".repeat(inner))}${edge("┘")}` },
+	];
+}
+
 export function createSettingsWorkspace(options: SettingsWorkspaceOptions): SettingsWorkspace {
 	let display = cloneDisplay(options.getDisplaySettings());
 	let focus = 0;
@@ -419,42 +447,61 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 			const provenance = options.getDisplayProvenance();
 			const allRows = rows();
 			const marker = (row: Row) => (focus === rowIndex(row, allRows) ? options.theme.fg("accent", "›") : " ");
+			const isFocused = (row: Row): boolean => focus === rowIndex(row, allRows);
+			const rowLine = (row: Row, text: string): LayoutLine => ({
+				line: `${marker(row)} ${text}`,
+				focused: isFocused(row),
+			});
 			const presetRow: Row = { kind: "preset", id: "preset" };
 			const densityRow: Row = { kind: "density", id: "density" };
 			const actionRow = (id: Extract<Row, { kind: "action" }>["id"]): Row => ({ kind: "action", id });
-			const actionLine = (id: Extract<Row, { kind: "action" }>["id"], label: string, hint: string) =>
-				`${marker(actionRow(id))} ${label.padEnd(16)}${hint}`;
+			const actionLine = (
+				id: Extract<Row, { kind: "action" }>["id"],
+				label: string,
+				hint: string,
+			): LayoutLine => rowLine(actionRow(id), `${label.padEnd(16)}${hint}`);
 			const sessionChanged = options.getSessionDisplayOverride() !== undefined;
 			const status = saving ? "saving…" : sessionChanged || sidebarDirty ? "session changed" : "effective";
-			const displayLines = [
-				`${marker(presetRow)} Preset       ${display.preset.padEnd(13)} ${provenance.preset}`,
-				`${marker(densityRow)} Density      ${display.density.padEnd(13)} ${provenance.density}`,
-				"",
+			const displayLines: LayoutLine[] = [
+				rowLine(presetRow, `Preset       ${display.preset.padEnd(13)} ${provenance.preset}`),
+				rowLine(densityRow, `Density      ${display.density.padEnd(13)} ${provenance.density}`),
+				{ line: "" },
 				actionLine("save", "Save default", saving ? "saving…" : "S"),
 				actionLine("revert", "Revert session", "R"),
 				actionLine("undo", "Undo", hasUndo ? "U" : "—"),
 			];
-			const segmentLines = [
-				options.theme.fg("muted", `  ● shown   ○ hidden   ◆ required   order ${provenance.order}`),
-				"",
+			const segmentLines: LayoutLine[] = [
+				{ line: options.theme.fg("muted", `  ● shown   ○ hidden   ◆ required   order ${provenance.order}`) },
+				{ line: "" },
 				...display.segmentLayout.map((entry, index) => {
 					const required = (REQUIRED_SEGMENT_IDS as readonly SegmentId[]).includes(entry.id);
 					const state = required ? "◆" : entry.visible ? "●" : "○";
 					const suffix = required ? "  required" : "";
-					return `${marker({ kind: "segment", id: entry.id })} ${String(index + 1).padStart(2)}  ${state} ${entry.id.padEnd(12)}${suffix}`;
+					return rowLine(
+						{ kind: "segment", id: entry.id },
+						`${String(index + 1).padStart(2)}  ${state} ${entry.id.padEnd(12)}${suffix}`,
+					);
 				}),
 			];
 			const sidebarAvailability = new Map(sidebarSettings().map((entry) => [entry.id, entry]));
-			const sidebarLines = [
-				options.theme.fg("muted", `  ● shown   ○ hidden   ${sidebarDirty ? "draft · " : ""}saved order`),
-				"",
+			const sidebarLines: LayoutLine[] = [
+				{
+					line: options.theme.fg(
+						"muted",
+						`  ● shown   ○ hidden   ${sidebarDirty ? "draft · " : ""}saved order`,
+					),
+				},
+				{ line: "" },
 				...sidebarDraft.map((entry, index) => {
 					const available = sidebarAvailability.get(entry.id);
 					const state = entry.visible ? "●" : "○";
 					const suffix = available?.available === false ? "  unavailable" : "";
-					return `${marker({ kind: "sidebarPanel", id: entry.id })} ${String(index + 1).padStart(2)}  ${state} ${available?.title ?? entry.id}${suffix}`;
+					return rowLine(
+						{ kind: "sidebarPanel", id: entry.id },
+						`${String(index + 1).padStart(2)}  ${state} ${available?.title ?? entry.id}${suffix}`,
+					);
 				}),
-				"",
+				{ line: "" },
 				actionLine("sidebar-default", "Restore default", "D"),
 			];
 			const sidebarPreviewRows =
@@ -479,35 +526,38 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 					options.theme,
 				),
 			];
-			let editing: string[];
+			let editing: LayoutLine[];
 			if (outerInner >= 72) {
 				const leftWidth = Math.max(28, Math.floor((outerInner - 2) * 0.4));
 				const rightWidth = outerInner - leftWidth - 2;
 				const height = Math.max(displayLines.length, segmentLines.length);
-				const left = panel(
+				const left = panelWithFocus(
 					"Display",
-					[...displayLines, ...Array(Math.max(0, height - displayLines.length)).fill("")],
+					[...displayLines, ...Array(Math.max(0, height - displayLines.length)).fill({ line: "" })],
 					leftWidth,
 					options.theme,
 				);
-				const right = panel(
+				const right = panelWithFocus(
 					"Segment Editor",
-					[...segmentLines, ...Array(Math.max(0, height - segmentLines.length)).fill("")],
+					[...segmentLines, ...Array(Math.max(0, height - segmentLines.length)).fill({ line: "" })],
 					rightWidth,
 					options.theme,
 				);
 				editing = [
-					...left.map((line, index) => `${line}  ${right[index] ?? fit("", rightWidth)}`),
-					"",
-					...panel("Sidebar Editor", sidebarLines, outerInner, options.theme),
+					...left.map((leftLine, index) => ({
+						line: `${leftLine.line}  ${right[index]?.line ?? fit("", rightWidth)}`,
+						focused: Boolean(leftLine.focused || right[index]?.focused),
+					})),
+					{ line: "" },
+					...panelWithFocus("Sidebar Editor", sidebarLines, outerInner, options.theme),
 				];
 			} else {
 				editing = [
-					...panel("Display", displayLines, outerInner, options.theme),
-					"",
-					...panel("Segment Editor", segmentLines, outerInner, options.theme),
-					"",
-					...panel("Sidebar Editor", sidebarLines, outerInner, options.theme),
+					...panelWithFocus("Display", displayLines, outerInner, options.theme),
+					{ line: "" },
+					...panelWithFocus("Segment Editor", segmentLines, outerInner, options.theme),
+					{ line: "" },
+					...panelWithFocus("Sidebar Editor", sidebarLines, outerInner, options.theme),
 				];
 			}
 			const selected = allRows[focus];
@@ -529,19 +579,23 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 			} else if (selected?.kind === "action") {
 				guidance = `${selected.id} · Enter or ${selected.id === "save" ? "S" : selected.id === "revert" ? "R" : selected.id === "sidebar-default" ? "D" : "U"}`;
 			}
-			const content = [
-				fit(
-					`${options.theme.bold("DISPLAY SETTINGS")}  ${options.theme.fg(sessionChanged ? "warning" : "success", status)}`,
-					outerInner,
-				),
-				fit(options.theme.fg("muted", "↑/↓ Select · Enter Change · S Save · Esc Close"), outerInner),
-				"",
-				...preview,
-				"",
+			const content: LayoutLine[] = [
+				{
+					line: fit(
+						`${options.theme.bold("DISPLAY SETTINGS")}  ${options.theme.fg(sessionChanged ? "warning" : "success", status)}`,
+						outerInner,
+					),
+				},
+				{
+					line: fit(options.theme.fg("muted", "↑/↓ Select · Enter Change · S Save · Esc Close"), outerInner),
+				},
+				{ line: "" },
+				...preview.map((line) => ({ line })),
+				{ line: "" },
 				...editing,
-				"",
-				...(feedback ? [fit(feedback, outerInner)] : []),
-				fit(guidance, outerInner),
+				{ line: "" },
+				...(feedback ? [{ line: fit(feedback, outerInner) }] : []),
+				{ line: fit(guidance, outerInner) },
 			];
 			const border = (text: string) => options.theme.fg("borderAccent", text);
 			const frame = (lines: string[]): string[] =>
@@ -552,59 +606,95 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 				].map((line) => truncateToWidth(line, width, ""));
 
 			const viewportHeight = options.getViewportHeight?.();
-			if (viewportHeight === undefined || !Number.isFinite(viewportHeight)) return frame(content);
+			if (viewportHeight === undefined || !Number.isFinite(viewportHeight))
+				return frame(content.map(({ line }) => line));
+
+			// Pi clamps an overlay's maxHeight to at least one row. Keep the reported
+			// viewport as-is, however: callers can report zero while the terminal is
+			// being resized, and returning no lines is safer than overflowing it.
+			const height = Math.max(0, Math.floor(viewportHeight));
+			if (height === 0) return [];
+			if (height === 1) return [fit(options.theme.bold("DISPLAY SETTINGS"), width)];
 
 			// Keep the heading, global key hints, and contextual guidance fixed. Only the
 			// central preview/editor content is virtualized so the frame is never clipped.
-			const height = Math.max(2, Math.floor(viewportHeight));
 			const fixedTop = content.slice(0, 2);
 			const fixedBottom = content.slice(-1);
+			const interiorRows = height - 2;
+			if (interiorRows < fixedTop.length + fixedBottom.length) {
+				// There is room for a frame, but not for the complete sticky chrome.
+				// Prefer the heading over dropping the outer frame at tiny heights.
+				return frame([...fixedTop, ...fixedBottom].slice(0, interiorRows).map(({ line }) => line));
+			}
+
 			const central = content.slice(2, -1);
-			while (central.at(-1) === "") central.pop();
-			const centralRows = Math.max(0, height - fixedTop.length - fixedBottom.length - 2);
-			const centralCapacity = Math.max(0, centralRows - 2);
-			const selectedEditingLine = editing.findIndex((line) => line.includes("›"));
-			const editingStart = 3 + preview.length + 1;
-			const selectedCentralLine = Math.max(0, editingStart + Math.max(0, selectedEditingLine) - 2);
+			while (central.at(-1)?.line === "") central.pop();
+			const centralRows = interiorRows - fixedTop.length - fixedBottom.length;
+			const selectedCentralLine = Math.max(
+				0,
+				central.findIndex(({ focused }) => focused),
+			);
 			const overflowing = central.length > centralRows;
-			let bodyCapacity = overflowing ? Math.max(1, centralCapacity) : Math.max(0, centralRows);
+			let centralLines: LayoutLine[];
 
 			if (!overflowing) {
 				scrollOffset = 0;
+				centralLines = [...central];
+			} else if (centralRows === 0) {
+				// The sticky chrome fills the interior (height 5); there is no room for
+				// editor content or indicators, but the frame remains complete.
+				scrollOffset = 0;
+				centralLines = [];
+			} else if (centralRows === 1) {
+				// One row cannot carry an indicator and a focused row simultaneously.
+				scrollOffset = Math.min(selectedCentralLine, central.length - 1);
+				centralLines = [central[scrollOffset] ?? { line: "" }];
+			} else if (centralRows === 2) {
+				// Two rows can show one indicator plus content. Both indicators require
+				// at least three central rows, so prioritize the focused edge.
+				if (selectedCentralLine <= 0) {
+					scrollOffset = 0;
+					centralLines = [central[0] ?? { line: "" }, { line: fit("↓ more", outerInner) }];
+				} else if (selectedCentralLine >= central.length - 1) {
+					scrollOffset = central.length - 1;
+					centralLines = [{ line: fit("↑ more", outerInner) }, central[scrollOffset] ?? { line: "" }];
+				} else {
+					scrollOffset = selectedCentralLine;
+					centralLines = [{ line: fit("↑ more", outerInner) }, central[scrollOffset] ?? { line: "" }];
+				}
 			} else {
-				let maxOffset = Math.max(0, central.length - bodyCapacity);
-				scrollOffset = Math.max(0, Math.min(scrollOffset, maxOffset));
-				if (selectedCentralLine < scrollOffset) scrollOffset = selectedCentralLine;
-				else if (selectedCentralLine >= scrollOffset + bodyCapacity)
-					scrollOffset = selectedCentralLine - bodyCapacity + 1;
+				const topCapacity = centralRows - 1;
+				const bottomOffset = central.length - topCapacity;
+				const middleCapacity = centralRows - 2;
+				if (selectedCentralLine < topCapacity) {
+					scrollOffset = 0;
+				} else if (selectedCentralLine >= bottomOffset) {
+					scrollOffset = bottomOffset;
+				} else {
+					const minMiddleOffset = 1;
+					const maxMiddleOffset = central.length - middleCapacity - 1;
+					scrollOffset = Math.max(minMiddleOffset, Math.min(scrollOffset, maxMiddleOffset));
+					if (selectedCentralLine < scrollOffset) scrollOffset = selectedCentralLine;
+					else if (selectedCentralLine >= scrollOffset + middleCapacity)
+						scrollOffset = selectedCentralLine - middleCapacity + 1;
+					scrollOffset = Math.max(minMiddleOffset, Math.min(scrollOffset, maxMiddleOffset));
+				}
 
-				// If the selected row is in the tail, prefer the bottom edge so the
-				// trailing panel border can share the viewport with it.
-				const bottomCapacity = Math.max(1, centralRows - 1);
-				const bottomOffset = Math.max(0, central.length - bottomCapacity);
-				if (selectedCentralLine >= bottomOffset) scrollOffset = bottomOffset;
-
-				maxOffset = Math.max(0, central.length - bodyCapacity);
-				scrollOffset = Math.max(0, Math.min(scrollOffset, maxOffset));
 				const atTop = scrollOffset === 0;
-				const atBottom = scrollOffset === bottomOffset && selectedCentralLine >= bottomOffset;
-				bodyCapacity = Math.max(1, centralRows - (atTop ? 0 : 1) - (atBottom ? 0 : 1));
-				maxOffset = Math.max(0, central.length - bodyCapacity);
-				scrollOffset = Math.max(0, Math.min(scrollOffset, maxOffset));
+				const atBottom = scrollOffset === bottomOffset;
+				const bodyCapacity = centralRows - (atTop ? 0 : 1) - (atBottom ? 0 : 1);
+				const body = central.slice(scrollOffset, scrollOffset + bodyCapacity);
+				centralLines = [
+					...(atTop ? [] : [{ line: fit("↑ more", outerInner) }]),
+					...body,
+					...(atBottom ? [] : [{ line: fit("↓ more", outerInner) }]),
+				];
 			}
 
-			const body = central.slice(scrollOffset, scrollOffset + bodyCapacity);
-			const hasMoreAbove = overflowing && scrollOffset > 0;
-			const hasMoreBelow = overflowing && scrollOffset + body.length < central.length;
-			const centralLines = overflowing
-				? [
-						hasMoreAbove ? fit("↑ more", outerInner) : "",
-						...body,
-						hasMoreBelow ? fit("↓ more", outerInner) : "",
-					]
-				: body;
-			while (centralLines.length < centralRows) centralLines.push("");
-			return frame([...fixedTop, ...centralLines, ...fixedBottom].slice(0, Math.max(0, height - 2)));
+			while (centralLines.length < centralRows) centralLines.push({ line: "" });
+			return frame(
+				[...fixedTop, ...centralLines, ...fixedBottom].slice(0, interiorRows).map(({ line }) => line),
+			);
 		},
 	};
 }
