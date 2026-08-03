@@ -97,10 +97,6 @@ export class AtelierRuntime {
 		return this.#config.sidebarPanelLayout.map((entry) => ({ ...entry }));
 	}
 
-	getUserSidebarPanelLayoutConfigured(): boolean {
-		return this.#displayLayers.user !== undefined && "sidebarPanelLayout" in this.#displayLayers.user;
-	}
-
 	getDisplaySettings(): DisplaySettings {
 		return {
 			preset: this.#config.preset,

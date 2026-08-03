@@ -16,7 +16,12 @@ import {
 } from "../src/completion-notifier.js";
 import { loadConfig, saveUserConfig, saveUserConfigPatch } from "../src/config.js";
 import { createFooterComponent, type ThemeLike } from "../src/footer.js";
-import { openAtelierControlCenter, openDisplaySettingsWorkspace } from "../src/menu.js";
+import {
+	openAtelierControlCenter,
+	openDisplaySettingsWorkspace,
+	type DisplaySettingsRuntime,
+} from "../src/menu.js";
+import type { SidebarPanelSetting } from "../src/settings-workspace.js";
 import { createRunActivityTracker, type RunActivityTracker } from "../src/run-activity.js";
 import {
 	BUILTIN_SIDEBAR_PANEL_IDS,
@@ -34,6 +39,7 @@ import type { AtelierState, FooterState, NormalizedTodo, RpivTask, TodoItem } fr
 
 export {
 	SIDEBAR_PANEL_EVENT_CHANNEL,
+	SIDEBAR_PANEL_PROTOCOL_VERSION,
 	createSidebarPanelRegistry,
 	registerSidebarPanel,
 } from "../src/sidebar-panels.js";
@@ -246,6 +252,30 @@ export default function atelierExtension(
 		};
 	}
 
+	function getSidebarPanelSettings(targetRuntime: AtelierRuntime): readonly SidebarPanelSetting[] {
+		const configured = targetRuntime.getSidebarPanelLayout();
+		const available = new Map((panelRegistry?.getAvailable() ?? []).map((panel) => [panel.id, panel]));
+		const configuredIds = new Set(configured.map((entry) => entry.id));
+		return [
+			...configured.map((entry) => ({
+				id: entry.id,
+				title: available.get(entry.id)?.title ?? entry.id,
+				available:
+					BUILTIN_SIDEBAR_PANEL_IDS.includes(entry.id as (typeof BUILTIN_SIDEBAR_PANEL_IDS)[number]) ||
+					available.has(entry.id),
+				visible: entry.visible,
+			})),
+			...Array.from(available.values())
+				.filter((panel) => !configuredIds.has(panel.id))
+				.map((panel) => ({
+					id: panel.id,
+					title: panel.title,
+					available: true,
+					visible: false,
+				})),
+		];
+	}
+
 	async function openMenu(ctx: ExtensionContext): Promise<void> {
 		const current = getCurrentContextState(ctx);
 		if (!current?.runtime || !current.sidebar) {
@@ -264,6 +294,7 @@ export default function atelierExtension(
 				toggle: () => targetSidebar.toggle(),
 				isToolListExpanded: () => targetRuntime.getConfig().showSidebarToolNames,
 				toggleToolList: async () => setSidebarToolNames(ctx, undefined, targetRuntime, targetSidebar),
+				getSidebarPanelSettings: () => getSidebarPanelSettings(targetRuntime),
 			},
 			requestAllRenders,
 			lifecycleGuardedSavePatch(targetRuntime),
@@ -281,46 +312,25 @@ export default function atelierExtension(
 			return;
 		}
 		const targetRuntime = current.runtime;
+		const displayRuntime: DisplaySettingsRuntime = {
+			getConfig: () => targetRuntime.getConfig(),
+			getSidebarPanelSettings: () => getSidebarPanelSettings(targetRuntime),
+			getDisplaySettings: () => targetRuntime.getDisplaySettings(),
+			getDisplayProvenance: () => targetRuntime.getDisplayProvenance(),
+			getSessionDisplayOverride: () => targetRuntime.getSessionDisplayOverride(),
+			replaceSessionDisplayOverride: (value) => {
+				if (runtime === targetRuntime) targetRuntime.replaceSessionDisplayOverride(value);
+			},
+			clearSessionDisplayOverride: () => {
+				if (runtime === targetRuntime) targetRuntime.clearSessionDisplayOverride();
+			},
+			applySavedUserDisplayPatch: (patch) => {
+				if (runtime === targetRuntime) targetRuntime.applySavedUserDisplayPatch(patch);
+			},
+		};
 		await openDisplaySettingsWorkspace(
 			ctx,
-			{
-				getConfig: () => targetRuntime.getConfig(),
-				getSidebarPanelLayout: () => {
-					const configured = targetRuntime.getSidebarPanelLayout();
-					const available = new Map((panelRegistry?.getAvailable() ?? []).map((panel) => [panel.id, panel]));
-					const configuredIds = new Set(configured.map((entry) => entry.id));
-					return [
-						...configured.map((entry) => ({
-							id: entry.id,
-							title: available.get(entry.id)?.title ?? entry.id,
-							available:
-								BUILTIN_SIDEBAR_PANEL_IDS.includes(entry.id as (typeof BUILTIN_SIDEBAR_PANEL_IDS)[number]) ||
-								available.has(entry.id),
-							visible: entry.visible,
-						})),
-						...Array.from(available.values())
-							.filter((panel) => !configuredIds.has(panel.id))
-							.map((panel) => ({
-								id: panel.id,
-								title: panel.title,
-								available: true,
-								visible: false,
-							})),
-					];
-				},
-				getDisplaySettings: () => targetRuntime.getDisplaySettings(),
-				getDisplayProvenance: () => targetRuntime.getDisplayProvenance(),
-				getSessionDisplayOverride: () => targetRuntime.getSessionDisplayOverride(),
-				replaceSessionDisplayOverride: (value) => {
-					if (runtime === targetRuntime) targetRuntime.replaceSessionDisplayOverride(value);
-				},
-				clearSessionDisplayOverride: () => {
-					if (runtime === targetRuntime) targetRuntime.clearSessionDisplayOverride();
-				},
-				applySavedUserDisplayPatch: (patch) => {
-					if (runtime === targetRuntime) targetRuntime.applySavedUserDisplayPatch(patch);
-				},
-			},
+			displayRuntime,
 			join(getAgentDir(), "pi-atelier.json"),
 			requestAllRenders,
 			lifecycleGuardedSavePatch(targetRuntime),

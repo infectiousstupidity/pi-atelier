@@ -22,8 +22,8 @@ import type {
 } from "./types.js";
 
 export interface SidebarPanelSetting {
-	id: string;
-	title?: string;
+	id: SidebarPanelId;
+	title: string;
 	available: boolean;
 	visible: boolean;
 }
@@ -60,7 +60,7 @@ type Row =
 	| { kind: "preset"; id: "preset" }
 	| { kind: "density"; id: "density" }
 	| { kind: "segment"; id: SegmentId }
-	| { kind: "sidebarPanel"; id: string }
+	| { kind: "sidebarPanel"; id: SidebarPanelId }
 	| { kind: "action"; id: "save" | "revert" | "undo" | "sidebar-default" };
 
 const cloneDisplay = (value: DisplaySettings): DisplaySettings => ({
@@ -144,7 +144,7 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 		options.getRenderConfig().sidebarPanelLayout ??
 		DEFAULT_SIDEBAR_PANEL_LAYOUT
 	).map((entry) => ({
-		id: entry.id as SidebarPanelId,
+		id: entry.id,
 		visible: entry.visible,
 	}));
 	let sidebarUndo: typeof sidebarDraft | undefined;

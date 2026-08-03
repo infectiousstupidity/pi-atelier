@@ -146,24 +146,49 @@ describe("configuration", () => {
 		expect(result.config.showSidebarAgent).toBe(false);
 	});
 
-	it("keeps mergeConfig Agent visibility global-user-only", () => {
+	it("keeps legacy Agent and TODOS visibility global-user-only in mergeConfig", () => {
 		expect(
-			mergeConfig({ showSidebarAgent: false }, { showSidebarAgent: true }, { showSidebarAgent: true }).config,
-		).toMatchObject({ showSidebarAgent: false });
+			mergeConfig(
+				{ showSidebarAgent: false, showSidebarTodos: false },
+				{ showSidebarAgent: true, showSidebarTodos: true },
+				{ showSidebarAgent: true, showSidebarTodos: true },
+			).config,
+		).toMatchObject({ showSidebarAgent: false, showSidebarTodos: false });
 		expect(
-			mergeConfig({}, { showSidebarAgent: false }, { showSidebarAgent: false }).config.showSidebarAgent,
-		).toBe(true);
+			mergeConfig(
+				{},
+				{ showSidebarAgent: false, showSidebarTodos: false },
+				{
+					showSidebarAgent: false,
+					showSidebarTodos: false,
+				},
+			).config,
+		).toMatchObject({ showSidebarAgent: true, showSidebarTodos: true });
 	});
 
-	it("ignores project and session Agent visibility when the user omits it", async () => {
-		await writeJson(projectPath, { showSidebarAgent: false });
+	it("ignores project and session legacy Sidebar visibility when the user omits it", async () => {
+		await writeJson(projectPath, { showSidebarAgent: false, showSidebarTodos: false });
 		const result = await loadConfig({
 			userPath,
 			projectPath,
 			projectTrusted: true,
-			session: { showSidebarAgent: false },
+			session: { showSidebarAgent: false, showSidebarTodos: false },
 		});
 		expect(result.config.showSidebarAgent).toBe(true);
+		expect(result.config.showSidebarTodos).toBe(true);
+	});
+
+	it("keeps a user legacy TODOS value ahead of trusted project and session values", async () => {
+		await writeJson(userPath, { showSidebarTodos: false });
+		await writeJson(projectPath, { showSidebarTodos: true });
+		const result = await loadConfig({
+			userPath,
+			projectPath,
+			projectTrusted: true,
+			session: { showSidebarTodos: true },
+		});
+		expect(result.config.showSidebarTodos).toBe(false);
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "todos")?.visible).toBe(false);
 	});
 
 	it("does not read, warn about, or attribute an untrusted project", async () => {

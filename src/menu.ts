@@ -14,7 +14,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import { saveUserConfig, saveUserConfigPatch } from "./config.js";
-import { createSettingsWorkspace } from "./settings-workspace.js";
+import { createSettingsWorkspace, type SidebarPanelSetting } from "./settings-workspace.js";
 import { applyDisplayTemplate, reorderSegment, toggleSegmentVisibility } from "./display.js";
 import type { AtelierRuntime } from "./state.js";
 import type { AtelierConfig, Ornament, SegmentId, TemplateName } from "./types.js";
@@ -27,6 +27,7 @@ export interface SidebarControls {
 	toggle(): void;
 	isToolListExpanded(): boolean;
 	toggleToolList(): Promise<void>;
+	getSidebarPanelSettings?(): readonly SidebarPanelSetting[];
 }
 
 interface MenuTheme {
@@ -283,19 +284,20 @@ async function showToolSettings(
 	);
 }
 
+export interface DisplaySettingsRuntime {
+	getConfig(): AtelierConfig;
+	getSidebarPanelSettings(): readonly SidebarPanelSetting[];
+	getDisplaySettings(): ReturnType<AtelierRuntime["getDisplaySettings"]>;
+	getDisplayProvenance(): ReturnType<AtelierRuntime["getDisplayProvenance"]>;
+	getSessionDisplayOverride(): ReturnType<AtelierRuntime["getSessionDisplayOverride"]>;
+	replaceSessionDisplayOverride(value: Parameters<AtelierRuntime["replaceSessionDisplayOverride"]>[0]): void;
+	clearSessionDisplayOverride(): void;
+	applySavedUserDisplayPatch(patch: Parameters<AtelierRuntime["applySavedUserDisplayPatch"]>[0]): void;
+}
+
 export async function openDisplaySettingsWorkspace(
 	ctx: ExtensionContext,
-	runtime: Pick<
-		AtelierRuntime,
-		| "getConfig"
-		| "getSidebarPanelLayout"
-		| "getDisplaySettings"
-		| "getDisplayProvenance"
-		| "getSessionDisplayOverride"
-		| "replaceSessionDisplayOverride"
-		| "clearSessionDisplayOverride"
-		| "applySavedUserDisplayPatch"
-	>,
+	runtime: DisplaySettingsRuntime,
 	userConfigPath: string,
 	requestAllRenders: () => void,
 	savePatch: SaveConfigPatch = saveUserConfigPatch,
@@ -308,13 +310,7 @@ export async function openDisplaySettingsWorkspace(
 		(tui, theme, _keys, done) =>
 			createSettingsWorkspace({
 				getDisplaySettings: () => runtime.getDisplaySettings(),
-				getSidebarPanelLayout: () =>
-					(runtime.getSidebarPanelLayout?.() ?? runtime.getConfig().sidebarPanelLayout).map((entry) => ({
-						id: entry.id,
-						title: entry.id,
-						available: true,
-						visible: entry.visible,
-					})),
+				getSidebarPanelLayout: runtime.getSidebarPanelSettings,
 				getDisplayProvenance: () => runtime.getDisplayProvenance(),
 				getSessionDisplayOverride: () => runtime.getSessionDisplayOverride(),
 				replaceSessionDisplayOverride: (value) => runtime.replaceSessionDisplayOverride(value),
@@ -382,42 +378,39 @@ export async function openAtelierControlCenter(
 						label: `Sidebar tool list: ${sidebar.isToolListExpanded() ? "Expanded" : "Collapsed"}`,
 						description: "User preference",
 					},
-					{
-						value: "sidebar-agent",
-						label: `Agent panel: ${runtime.getConfig().showSidebarAgent ? "On" : "Off"}`,
-						description: "User preference",
-					},
 					{ value: "back", label: "Back" },
 				]);
 				if (!choice || choice === "back") break;
 				if (choice === "display")
-					await openDisplaySettingsWorkspace(ctx, runtime, userConfigPath, requestAllRenders, savePatch);
+					await openDisplaySettingsWorkspace(
+						ctx,
+						{
+							getConfig: () => runtime.getConfig(),
+							getSidebarPanelSettings:
+								sidebar.getSidebarPanelSettings ??
+								(() =>
+									(runtime.getSidebarPanelLayout?.() ?? runtime.getConfig().sidebarPanelLayout).map(
+										(entry) => ({
+											id: entry.id,
+											title: entry.id,
+											available: true,
+											visible: entry.visible,
+										}),
+									)),
+							getDisplaySettings: () => runtime.getDisplaySettings(),
+							getDisplayProvenance: () => runtime.getDisplayProvenance(),
+							getSessionDisplayOverride: () => runtime.getSessionDisplayOverride(),
+							replaceSessionDisplayOverride: (value) => runtime.replaceSessionDisplayOverride(value),
+							clearSessionDisplayOverride: () => runtime.clearSessionDisplayOverride(),
+							applySavedUserDisplayPatch: (patch) => runtime.applySavedUserDisplayPatch(patch),
+						},
+						userConfigPath,
+						requestAllRenders,
+						savePatch,
+					);
 				else if (choice === "notifications")
 					await actions.setCompletionNotifications(!runtime.getConfig().completionNotifications);
-				else if (choice === "sidebar-agent") {
-					const next = !runtime.getConfig().showSidebarAgent;
-					const sidebarPanelLayout = runtime
-						.getSidebarPanelLayout?.()
-						.map((entry) => (entry.id === "agent" ? { ...entry, visible: next } : { ...entry }));
-					runtime.setConfig({
-						...runtime.getConfig(),
-						showSidebarAgent: next,
-						...(sidebarPanelLayout ? { sidebarPanelLayout } : {}),
-					});
-					try {
-						const patch =
-							runtime.getUserSidebarPanelLayoutConfigured?.() && sidebarPanelLayout
-								? { showSidebarAgent: next, sidebarPanelLayout }
-								: { showSidebarAgent: next };
-						await savePatch(userConfigPath, patch);
-						ctx.ui.notify(`Agent panel ${next ? "enabled" : "disabled"}`, "info");
-					} catch (error) {
-						ctx.ui.notify(
-							`Agent panel changed for this session but could not be saved: ${error instanceof Error ? error.message : String(error)}`,
-							"warning",
-						);
-					}
-				} else await sidebar.toggleToolList();
+				else await sidebar.toggleToolList();
 			}
 		} else if (category === "controls") {
 			for (;;) {

@@ -239,7 +239,7 @@ export function createSidebarPanelRegistry(options: SidebarPanelRegistryOptions 
 		return true;
 	};
 	const register = (panel: SidebarPanelContribution, source = sourceFor(panel.id)): boolean => {
-		if (disposed) return false;
+		if (disposed || typeof source !== "string" || source.trim() === "") return false;
 		const safe = sanitizeContribution(panel);
 		if (!safe || !safe.id.includes(":")) return false;
 		const owner = owners.get(safe.id);
@@ -253,7 +253,7 @@ export function createSidebarPanelRegistry(options: SidebarPanelRegistryOptions 
 		return true;
 	};
 	const unregister = (id: SidebarPanelId, source = sourceFor(id)): boolean => {
-		if (disposed || !isSidebarPanelId(id)) return false;
+		if (disposed || !isSidebarPanelId(id) || typeof source !== "string" || source.trim() === "") return false;
 		if (owners.get(id) !== source) return false;
 		owners.delete(id);
 		const removed = panels.delete(id);
@@ -264,7 +264,8 @@ export function createSidebarPanelRegistry(options: SidebarPanelRegistryOptions 
 		if (disposed || !isEvent(data)) return;
 		if (typeof data.source === "string" && options.instanceId && data.source === options.instanceId) return;
 		if (data.type === "discover") return;
-		if (typeof data.source !== "string" || !Number.isSafeInteger(data.revision)) return;
+		if (typeof data.source !== "string" || data.source.trim() === "" || !Number.isSafeInteger(data.revision))
+			return;
 		let panel: SidebarPanelContribution | undefined;
 		if (data.type === "register") {
 			panel = sanitizeContribution(data.panel);
@@ -328,8 +329,9 @@ export function registerSidebarPanel(
 	options: { source?: string } = {},
 ): { update(panel: SidebarPanelContribution): void; dispose(): void } {
 	const source = options.source ?? sourceFor(panel.id);
+	const stableId = panel.id;
 	let revision = 0;
-	let current = panel;
+	let current = { ...panel, id: stableId };
 	let disposed = false;
 	const emitRegister = (requestId?: string): void => {
 		if (disposed) return;
@@ -351,7 +353,9 @@ export function registerSidebarPanel(
 	return {
 		update(next) {
 			if (disposed) return;
-			current = next;
+			// A publisher owns one stable ID for its whole lifetime. Ignore an
+			// attempted ID change rather than orphaning the previous registration.
+			current = { ...next, id: stableId };
 			emitRegister();
 		},
 		dispose() {

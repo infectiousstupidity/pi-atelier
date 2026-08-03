@@ -204,6 +204,107 @@ describe("sidebar snapshot and layout", () => {
 		expect(SIDEBAR_PANEL_EVENT_CHANNEL).toBe("pi-atelier:sidebar-panels");
 		registry.dispose();
 	});
+	it("rejects malformed public events and preserves panel ownership across revisions", () => {
+		const registry = createSidebarPanelRegistry();
+		for (const event of [
+			undefined,
+			null,
+			{},
+			{ version: 2, type: "register" },
+			{ version: 1, type: "register", source: "vendor", revision: 1 },
+			{
+				version: 1,
+				type: "register",
+				source: "vendor",
+				revision: 1,
+				panel: { id: "not-namespaced", title: "Bad", rows: [] },
+			},
+			{
+				version: 1,
+				type: "register",
+				source: "vendor",
+				revision: 1,
+				panel: { id: "vendor:queue", title: "Queue", rows: [null] },
+			},
+		])
+			registry.handleEvent(event);
+		expect(registry.getAvailable()).toEqual([]);
+
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "vendor",
+			revision: 1,
+			panel: { id: "vendor:queue", title: "Queue", rows: ["one"] },
+		});
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "other",
+			revision: 1,
+			panel: { id: "vendor:queue", title: "Hijack", rows: ["bad"] },
+		});
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "vendor",
+			revision: 1,
+			panel: { id: "vendor:queue", title: "Stale", rows: ["stale"] },
+		});
+		expect(registry.get("vendor:queue")?.title).toBe("Queue");
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "vendor",
+			revision: 2,
+			panel: { id: "vendor:queue", title: "Updated", rows: ["two"] },
+		});
+		expect(registry.get("vendor:queue")?.title).toBe("Updated");
+		registry.handleEvent({
+			version: 1,
+			type: "unregister",
+			source: "other",
+			revision: 2,
+			id: "vendor:queue",
+		});
+		expect(registry.get("vendor:queue")?.title).toBe("Updated");
+		registry.handleEvent({
+			version: 1,
+			type: "unregister",
+			source: "vendor",
+			revision: 3,
+			id: "vendor:queue",
+		});
+		expect(registry.get("vendor:queue")).toBeUndefined();
+		registry.dispose();
+	});
+
+	it("keeps publisher IDs stable and ignores updates after teardown", () => {
+		const emitted: unknown[] = [];
+		const listeners = new Set<(data: unknown) => void>();
+		const events = {
+			on: (_channel: string, handler: (data: unknown) => void) => {
+				listeners.add(handler);
+				return () => listeners.delete(handler);
+			},
+			emit: (_channel: string, data: unknown) => {
+				emitted.push(data);
+				for (const listener of [...listeners]) listener(data);
+			},
+		};
+		const publisher = registerSidebarPanel({ events }, { id: "vendor:queue", title: "Queue", rows: ["one"] });
+		const registry = createSidebarPanelRegistry({ events });
+		publisher.update({ id: "other:panel", title: "Renamed", rows: ["two"] });
+		expect(registry.get("vendor:queue")?.title).toBe("Renamed");
+		expect(registry.get("other:panel")).toBeUndefined();
+		expect((emitted.at(-1) as { panel?: { id?: string } })?.panel?.id).toBe("vendor:queue");
+		publisher.dispose();
+		expect(registry.get("vendor:queue")).toBeUndefined();
+		registry.dispose();
+		publisher.update({ id: "vendor:queue", title: "After dispose", rows: ["three"] });
+		expect(registry.getAvailable()).toEqual([]);
+	});
+
 	it("builds the approved core overview", () => {
 		expect(snapshot()).toMatchObject({
 			projectName: "pi-atelier",

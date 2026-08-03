@@ -95,14 +95,12 @@ function resolveSidebarLayout(layers: DisplayLayerState): SidebarResolution {
 		};
 	}
 	const layout = cloneSidebarLayout(DEFAULT_SIDEBAR_PANEL_LAYOUT);
-	// Agent has always been a global user preference. Project/session values are
-	// intentionally ignored even while reading the legacy compatibility key.
+	// Legacy Agent and TODOS visibility are global-user-only compatibility inputs.
+	// Project/session values are intentionally ignored.
 	if (user && typeof user.showSidebarAgent === "boolean")
 		setSidebarVisibility(layout, "agent", user.showSidebarAgent);
-	for (const input of [layers.user, layers.project, layers.session]) {
-		if (input && typeof input.showSidebarTodos === "boolean")
-			setSidebarVisibility(layout, "todos", input.showSidebarTodos);
-	}
+	if (user && typeof user.showSidebarTodos === "boolean")
+		setSidebarVisibility(layout, "todos", user.showSidebarTodos);
 	return { layout, warnings, authoritative: false };
 }
 
@@ -369,6 +367,13 @@ function applyNonDisplay(input: unknown, config: AtelierConfig, warnings: string
 	}
 }
 
+function applyGlobalSidebarCompatibility(config: AtelierConfig, input: unknown): void {
+	const global = cloneConfig(DEFAULT_CONFIG);
+	applyNonDisplay(input, global, []);
+	config.showSidebarAgent = global.showSidebarAgent;
+	config.showSidebarTodos = global.showSidebarTodos;
+}
+
 export function validateConfig(input: unknown, base: AtelierConfig = DEFAULT_CONFIG): ConfigLoadResult {
 	const config = cloneConfig(base);
 	const warnings: string[] = [];
@@ -383,7 +388,7 @@ export function validateConfig(input: unknown, base: AtelierConfig = DEFAULT_CON
 			sidebar.layout.find((entry) => entry.id === "agent")?.visible ?? config.showSidebarAgent;
 		config.showSidebarTodos =
 			sidebar.layout.find((entry) => entry.id === "todos")?.visible ?? config.showSidebarTodos;
-	}
+	} else applyGlobalSidebarCompatibility(config, input);
 	return {
 		config,
 		warnings: [...new Set([...warnings, ...resolved.warnings, ...sidebar.warnings])],
@@ -410,11 +415,7 @@ export function mergeConfig(...inputs: unknown[]): ConfigLoadResult {
 			sidebar.layout.find((entry) => entry.id === "agent")?.visible ?? config.showSidebarAgent;
 		config.showSidebarTodos =
 			sidebar.layout.find((entry) => entry.id === "todos")?.visible ?? config.showSidebarTodos;
-	}
-	// Agent visibility is intentionally a global user-only preference, matching loadConfig.
-	const global = cloneConfig(DEFAULT_CONFIG);
-	applyNonDisplay(inputs[0], global, []);
-	if (!sidebar.authoritative) config.showSidebarAgent = global.showSidebarAgent;
+	} else applyGlobalSidebarCompatibility(config, inputs[0]);
 	return {
 		config,
 		warnings: [...new Set([...warnings, ...resolved.warnings, ...sidebar.warnings])],
@@ -457,11 +458,11 @@ export async function loadConfig(options: LoadConfigOptions): Promise<ConfigLoad
 		config.showSidebarTodos =
 			sidebar.layout.find((entry) => entry.id === "todos")?.visible ?? config.showSidebarTodos;
 	}
-	// Completion notifications and Agent visibility are intentionally global-user-only.
+	// Completion notifications and legacy Sidebar visibility are global-user-only.
 	const global = cloneConfig(DEFAULT_CONFIG);
 	applyNonDisplay(user.value, global, []);
 	config.completionNotifications = global.completionNotifications;
-	if (!sidebar.authoritative) config.showSidebarAgent = global.showSidebarAgent;
+	if (!sidebar.authoritative) applyGlobalSidebarCompatibility(config, user.value);
 	return {
 		config,
 		warnings: [

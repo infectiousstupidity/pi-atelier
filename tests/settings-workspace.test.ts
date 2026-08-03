@@ -34,7 +34,7 @@ function harness(initialLayers: DisplayLayerState = {}) {
 		},
 		getRenderConfig: () => DEFAULT_CONFIG,
 		getSidebarPanelLayout: () =>
-			(DEFAULT_CONFIG.sidebarPanelLayout as readonly { id: string; visible: boolean }[]).map((entry) => ({
+			DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => ({
 				id: entry.id,
 				title: entry.id === "agent" ? "Agent" : entry.id,
 				available: entry.id !== "tools",

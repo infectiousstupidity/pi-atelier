@@ -105,7 +105,7 @@ Open Pi Atelier with:
 
 The default shortcut is `alt+a`. Both entry points open the partitioned **Atelier Control Center**:
 
-- **Settings** — the Display Settings Workspace, completion notifications, sidebar tool-list expansion, and Agent panel visibility
+- **Settings** — the Display Settings Workspace, completion notifications, and sidebar tool-list expansion
 - **Controls** — session-scoped Sidebar visibility, model/thinking selection, and active tools
 - **Actions** — session details, rename, and safe compaction
 
@@ -137,8 +137,6 @@ The sidebar starts shown whenever the extension initializes. An explicit `off` a
 ```
 
 You can also press `alt+a` to access separate sidebar visibility and tool-detail controls from the menu. When enabled, the session-scoped rail attaches to the top-right, fills the terminal height, and stays visible without taking editor focus.
-
-The Agent panel at the top of the sidebar can be hidden independently through **Settings → Agent panel** in the Control Center. The panel is shown by default; toggling it off saves immediately to user configuration and removes the agent state and model metadata from the sidebar.
 
 The Sidebar is an ordered, global-user surface separate from the footer `segmentLayout`. **Settings → Display** includes a Sidebar editor with a local draft, visibility toggles, Shift+Up/Shift+Down reordering, a Sidebar preview, one-step Undo, `D` product-default restore, explicit Save, and Escape-to-discard. Save rejects a draft with no visible panels. Built-in panel IDs are `agent`, `activity`, `alerts`, `todos`, `context`, `workspace`, `usage`, and `tools`.
 
@@ -235,9 +233,9 @@ Legacy `segments`, `ornament`, and `showExtensionStatuses` keys remain load-comp
 
 During streaming, TPS is prefixed with `~` while it is estimated, then replaced with final throughput when the response ends. Each value is dimmed to `~` until it is measured. Visibility toggles retain an entry's position, and reordering includes hidden entries.
 
-`showSidebarAgent` controls whether the Agent panel renders inside the sidebar. It is a global user-only preference; trusted project and session values are ignored. When set to `false`, the sidebar still shows but omits the agent state and model metadata section while leaving Activity, TODOS, Context, Workspace, Usage, and Tools unaffected. The preference can also be toggled through **Settings → Agent panel** in the Control Center and saves immediately.
+`showSidebarAgent` controls whether the Agent panel renders inside the sidebar. It is a global user-only compatibility input; trusted project and session values are ignored. When set to `false`, the sidebar still shows but omits the agent state and model metadata section while leaving Activity, TODOS, Context, Workspace, Usage, and Tools unaffected. Use **Settings → Display** to edit the ordered Sidebar layout.
 
-`showSidebarTodos` (default `true`) controls whether the sidebar displays the TODOS panel. Set to `false` to disable the panel and show complete todo output in the workspace. See [Sidebar](#sidebar) for supported result formats and TODO output behavior.
+`showSidebarTodos` (default `true`) is the corresponding global user-only compatibility input for the TODOS panel. Trusted project and session values are ignored. Set it to `false` to disable the panel and show complete todo output in the workspace. See [Sidebar](#sidebar) for supported result formats and TODO output behavior.
 
 ## Presets
 
