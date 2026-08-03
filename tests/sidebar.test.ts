@@ -247,6 +247,9 @@ describe("sidebar snapshot and layout", () => {
 
 	it("validates contributed IDs and bounded discovery request IDs at both public seams", () => {
 		expect(isSidebarPanelContributionId("vendor:queue")).toBe(true);
+		for (const suffix of ["\n", "\r", "\r\n", "\u2028", "\u2029", " ", "\t"]) {
+			expect(isSidebarPanelContributionId(`vendor:queue${suffix}`)).toBe(false);
+		}
 		expect(isSidebarPanelContributionId("agent")).toBe(false);
 		expect(isSidebarPanelContributionId("Vendor:queue")).toBe(false);
 		expect(isSidebarPanelContributionId("vendor:")).toBe(false);

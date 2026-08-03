@@ -55,7 +55,8 @@ export const DEFAULT_SIDEBAR_PANEL_LAYOUT: SidebarPanelLayout = BUILTIN_SIDEBAR_
 }));
 
 const BUILTIN_IDS = new Set<string>(BUILTIN_SIDEBAR_PANEL_IDS);
-const NAMESPACED_ID = /^[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*$/;
+// Use a strict end-of-input assertion; JavaScript's `$` also matches before a final line terminator.
+const NAMESPACED_ID = /^[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*(?![\s\S])/;
 const PANEL_ROLES = new Set([
 	"primary",
 	"accent",
