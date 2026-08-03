@@ -38,6 +38,7 @@ Pi Atelier has one visual palette. Selecting a light, dark, or custom Pi theme d
 - Editorial, minimal, and classic display presets
 - Session details, renaming, and safe compaction controls
 - Default-on, session-scoped, non-capturing docked information rail with live run, turn, tool, response-performance, Workspace Pulse, and TODOS activity
+- Ordered, global-user Sidebar panel layout with draft editing, unavailable-panel retention, and a structured extension contribution contract
 - TODO tracking for compatible `todo` results, including legacy details and the optional `@juicesharp/rpiv-todo` task format
 - Completion notifications when a turn settles or Pi explicitly requests user input
 - Fixed dark Midnight Spectrum across every selected theme, with a `NO_COLOR` fallback
@@ -139,6 +140,12 @@ You can also press `alt+a` to access separate sidebar visibility and tool-detail
 
 The Agent panel at the top of the sidebar can be hidden independently through **Settings → Agent panel** in the Control Center. The panel is shown by default; toggling it off saves immediately to user configuration and removes the agent state and model metadata from the sidebar.
 
+The Sidebar is an ordered, global-user surface separate from the footer `segmentLayout`. **Settings → Display** includes a Sidebar editor with a local draft, visibility toggles, Shift+Up/Shift+Down reordering, a Sidebar preview, one-step Undo, `D` product-default restore, explicit Save, and Escape-to-discard. Save rejects a draft with no visible panels. Built-in panel IDs are `agent`, `activity`, `alerts`, `todos`, `context`, `workspace`, `usage`, and `tools`.
+
+Extensions may contribute structured panels through the public `pi.events` channel `pi-atelier:sidebar-panels` (or the exported `registerSidebarPanel` helper). A contribution uses a stable namespaced ID such as `my-extension:queue`, a title, text rows, and an optional semantic role. The event envelope is versioned and uses `type: "register"` (or `"unregister"`) with a contributor `source` and monotonic `revision`; Atelier emits `type: "discover"` during startup so contributors loaded first can replay their current panels. Atelier owns framing, palette, sanitization, truncation, responsive composition, and height omission; contributors cannot inject TUI components or ANSI. Registration, updates, discovery, and removal are lifecycle-safe, and discovery works regardless of extension load order. New contributed panels start hidden. A configured panel that is not currently registered remains in its saved position and appears as unavailable in Settings; it is not rendered until available again. If every configured-visible panel is unavailable, the sidebar says `No available panels` and points to Settings.
+
+For compatibility, `showSidebarAgent` and `showSidebarTodos` are read when no user `sidebarPanelLayout` exists. A user `sidebarPanelLayout` takes precedence over those legacy fields and over trusted-project/session values. Sidebar layout is never read from project or session configuration, and saving it patches only the user file while preserving unrelated keys. The footer's ordered `segmentLayout` remains independent. Subagents and Skills panels are intentionally not implemented.
+
 The scan-first hierarchy leads with agent state and model when enabled, followed by a compact segmented context meter and a merged workspace summary. Workspace Pulse summarizes the entire Git worktree containing Pi's current directory: tracked changes, text additions and removals, and count-only untracked files. Binary files, changed submodules, and unresolved conflicts appear only when present; the first inspection, clean, unavailable, stale, and non-repository states remain explicit rather than being inferred from missing data. Pulse refreshes after tool activity, Turn boundaries, and branch changes without polling or watching external editor activity. It does not run tests, read untracked contents, change completion notifications, or add detail to the footer's existing dirty marker.
 
 Below 40 sidebar columns, a unified compact mode stacks Agent metadata when enabled alongside Workspace metadata, uses inline Usage pairs, and collapses tool details so important values remain complete instead of truncating. At wider sizes, paired metrics and tool columns use intrinsic content measurements rather than stretching gaps across the available width. Usage appears only when token or cost data exists. Access type remains visible with the agent metadata. Active tool names are collapsed by default behind the tool count and can be expanded through the command or menu; that preference is saved to user configuration. Expanded names automatically collapse below 40 sidebar columns and reappear when widened. Routine healthy extension statuses stay hidden, while warnings and errors appear as explicit alerts.
@@ -205,6 +212,16 @@ Complete example:
   "showSessionActions": true,
   "showSidebarToolNames": false,
   "showSidebarAgent": true,
+  "sidebarPanelLayout": [
+    { "id": "agent", "visible": true },
+    { "id": "activity", "visible": true },
+    { "id": "alerts", "visible": true },
+    { "id": "todos", "visible": true },
+    { "id": "context", "visible": true },
+    { "id": "workspace", "visible": true },
+    { "id": "usage", "visible": true },
+    { "id": "tools", "visible": true }
+  ],
   "showSidebarTodos": true,
   "completionNotifications": true
 }

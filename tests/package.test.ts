@@ -25,6 +25,14 @@ describe("npm package contract", () => {
 		expect(readme).toContain("version-sensitive");
 	});
 
+	it("publishes the Sidebar layout and contribution contract", async () => {
+		const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
+		expect(readme).toContain("sidebarPanelLayout");
+		expect(readme).toContain("pi-atelier:sidebar-panels");
+		expect(readme).toContain("namespaced");
+		expect(readme).toContain("No available panels");
+	});
+
 	it("publishes the direct Display workspace and keyboard contract", async () => {
 		const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
 		expect(readme).toContain("/atelier display");

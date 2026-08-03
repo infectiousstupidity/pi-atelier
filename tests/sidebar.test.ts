@@ -3,6 +3,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { EMPTY_RUN_ACTIVITY, type RunActivitySnapshot } from "../src/run-activity.js";
 import {
 	buildSidebarSnapshot,
+	createSidebarPanelRegistry,
+	registerSidebarPanel,
+	SIDEBAR_PANEL_EVENT_CHANNEL,
 	createSidebarComponent,
 	createSidebarController,
 	renderSidebarLines,
@@ -138,6 +141,69 @@ function fakeTui(requestRender = vi.fn()) {
 }
 
 describe("sidebar snapshot and layout", () => {
+	it("composes visible panels in persisted order and keeps unavailable entries out of rendering", () => {
+		const ordered = {
+			...DEFAULT_CONFIG,
+			showSidebarAgent: false,
+			showSidebarTodos: false,
+			sidebarPanelLayout: [
+				{ id: "vendor:queue" as const, visible: true },
+				{ id: "tools" as const, visible: true },
+				{ id: "activity" as const, visible: true },
+				...DEFAULT_CONFIG.sidebarPanelLayout.filter((entry) => !["tools", "activity"].includes(entry.id)),
+			],
+		};
+		const lines = renderSidebarLines(
+			{
+				...snapshot(),
+				sidebarPanels: [
+					{
+						id: "vendor:queue",
+						title: "Queue",
+						rows: [{ text: "queued 2" }],
+						available: true,
+						source: "vendor",
+					},
+				],
+			},
+			ordered,
+			theme,
+			44,
+			36,
+		);
+		const text = contentRows(lines).join("\n");
+		expect(text.indexOf("QUEUE")).toBeGreaterThanOrEqual(0);
+		expect(text.indexOf("QUEUE")).toBeLessThan(text.indexOf("TOOLS"));
+		expect(text).not.toContain("AGENT");
+	});
+
+	it("supports load-order discovery, updates, and removal through the public event seam", () => {
+		const listeners = new Set<(data: unknown) => void>();
+		const events = {
+			on: (_channel: string, handler: (data: unknown) => void) => {
+				listeners.add(handler);
+				return () => listeners.delete(handler);
+			},
+			emit: (_channel: string, data: unknown) => {
+				for (const listener of [...listeners]) listener(data);
+			},
+		};
+		const publisher = registerSidebarPanel({ events }, { id: "vendor:queue", title: "Queue", rows: ["one"] });
+		const changed = vi.fn();
+		const registry = createSidebarPanelRegistry({ events, onChange: changed });
+		expect(registry.get("vendor:queue")?.title).toBe("Queue");
+		publisher.update({
+			id: "vendor:queue",
+			title: "Updated queue",
+			rows: [{ text: "two", role: "warning" }],
+		});
+		expect(registry.get("vendor:queue")?.rows[0]?.text).toBe("two");
+		publisher.dispose();
+		expect(registry.get("vendor:queue")).toBeUndefined();
+		expect(changed).toHaveBeenCalled();
+		expect(SIDEBAR_PANEL_EVENT_CHANNEL).toBe("pi-atelier:sidebar-panels");
+		registry.dispose();
+	});
 	it("builds the approved core overview", () => {
 		expect(snapshot()).toMatchObject({
 			projectName: "pi-atelier",
@@ -149,6 +215,19 @@ describe("sidebar snapshot and layout", () => {
 			activeToolCount: 8,
 			availableToolCount: 12,
 		});
+	});
+
+	it("renders an explicit empty state when every configured-visible panel is unavailable", () => {
+		const hiddenBuiltins = DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => ({ ...entry, visible: false }));
+		const emptyConfig = {
+			...DEFAULT_CONFIG,
+			showSidebarAgent: false,
+			showSidebarTodos: false,
+			sidebarPanelLayout: [{ id: "vendor:missing" as const, visible: true }, ...hiddenBuiltins],
+		};
+		const rows = contentRows(renderSidebarLines(snapshot(), emptyConfig, theme, 44, 20));
+		expect(rows).toContain("No available panels");
+		expect(rows).toContain("Open /atelier Settings");
 	});
 
 	it("renders a full-height dock with elegant terminal-native panels", () => {

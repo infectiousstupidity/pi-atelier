@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { saveUserConfigPatch as persistConfigPatch } from "../src/config.js";
-import atelierExtension from "../extensions/index.js";
+import atelierExtension, { SIDEBAR_PANEL_EVENT_CHANNEL } from "../extensions/index.js";
 
 function deferred<T>() {
 	let resolve!: (value: T) => void;
@@ -199,6 +199,35 @@ async function withPersistedUserConfig(
 }
 
 describe("extension registration", () => {
+	it("discovers and renders a structured contributed panel through pi.events", async () => {
+		const h = harness();
+		await withPersistedUserConfig(
+			{
+				sidebarPanelLayout: [
+					{ id: "vendor:queue", visible: true },
+					...Array.from({ length: 8 }, (_, index) => ({
+						id: ["agent", "activity", "alerts", "todos", "context", "workspace", "usage", "tools"][index],
+						visible: false,
+					})),
+				],
+			},
+			async () => {
+				await start(h);
+				h.pi.events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
+					version: 1,
+					type: "register",
+					source: "vendor",
+					revision: 1,
+					panel: { id: "vendor:queue", title: "Queue", rows: ["queued 2"] },
+				});
+				await command(h, "sidebar on");
+				const rendered = h.overlays.at(-1)?.component.render(44).join("\\n") ?? "";
+				expect(rendered).toContain("QUEUE");
+				expect(rendered).toContain("queued 2");
+			},
+		);
+	});
+
 	it("registers the command and installs one footer in TUI mode", async () => {
 		const h = harness();
 		expect(h.commands.has("atelier")).toBe(true);

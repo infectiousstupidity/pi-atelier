@@ -39,6 +39,48 @@ describe("configuration", () => {
 		expect(DEFAULT_CONFIG.showSidebarToolNames).toBe(false);
 		expect(DEFAULT_CONFIG.completionNotifications).toBe(true);
 		expect(DEFAULT_CONFIG.showSidebarAgent).toBe(true);
+		expect(DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => entry.id)).toEqual([
+			"agent",
+			"activity",
+			"alerts",
+			"todos",
+			"context",
+			"workspace",
+			"usage",
+			"tools",
+		]);
+	});
+
+	it("loads an ordered global Sidebar layout with deterministic compatibility precedence", async () => {
+		await writeJson(userPath, {
+			showSidebarAgent: false,
+			showSidebarTodos: false,
+			sidebarPanelLayout: [
+				{ id: "tools", visible: false },
+				{ id: "vendor:queue", visible: false },
+				{ id: "tools", visible: true },
+			],
+		});
+		await writeJson(projectPath, { sidebarPanelLayout: [{ id: "agent", visible: false }] });
+		const result = await loadConfig({
+			userPath,
+			projectPath,
+			projectTrusted: true,
+			session: { sidebarPanelLayout: [] },
+		});
+		expect(result.config.sidebarPanelLayout.slice(0, 2)).toEqual([
+			{ id: "tools", visible: false },
+			{ id: "vendor:queue", visible: false },
+		]);
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible).toBe(true);
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "todos")?.visible).toBe(true);
+		expect(result.warnings.filter((warning) => warning.includes("duplicate")).length).toBe(1);
+	});
+
+	it("keeps legacy Sidebar visibility compatible when no authoritative layout is present", () => {
+		const result = validateConfig({ showSidebarAgent: false, showSidebarTodos: false });
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible).toBe(false);
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "todos")?.visible).toBe(false);
 	});
 
 	it("applies named templates atomically before same-layer deviations", () => {

@@ -93,6 +93,14 @@ export class AtelierRuntime {
 		return this.#config;
 	}
 
+	getSidebarPanelLayout(): AtelierConfig["sidebarPanelLayout"] {
+		return this.#config.sidebarPanelLayout.map((entry) => ({ ...entry }));
+	}
+
+	getUserSidebarPanelLayoutConfigured(): boolean {
+		return this.#displayLayers.user !== undefined && "sidebarPanelLayout" in this.#displayLayers.user;
+	}
+
 	getDisplaySettings(): DisplaySettings {
 		return {
 			preset: this.#config.preset,
@@ -149,6 +157,17 @@ export class AtelierRuntime {
 			...this.#displayLayers,
 			user: { ...this.#displayLayers.user, ...structuredClone(patch) },
 		};
+		if (patch.sidebarPanelLayout) {
+			const sidebarPanelLayout = patch.sidebarPanelLayout.map((entry) => ({ ...entry }));
+			this.#config = {
+				...this.#config,
+				sidebarPanelLayout,
+				showSidebarAgent:
+					sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible ?? this.#config.showSidebarAgent,
+				showSidebarTodos:
+					sidebarPanelLayout.find((entry) => entry.id === "todos")?.visible ?? this.#config.showSidebarTodos,
+			};
+		}
 		if (canonicalizeSession) {
 			const target = resolveDisplayLayers(this.#displayLayers).display;
 			let session = { ...this.#displayLayers.session };

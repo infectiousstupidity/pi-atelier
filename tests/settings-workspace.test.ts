@@ -33,6 +33,13 @@ function harness(initialLayers: DisplayLayerState = {}) {
 			layers = { ...layers, user: { ...layers.user, ...structuredClone(patch) } };
 		},
 		getRenderConfig: () => DEFAULT_CONFIG,
+		getSidebarPanelLayout: () =>
+			(DEFAULT_CONFIG.sidebarPanelLayout as readonly { id: string; visible: boolean }[]).map((entry) => ({
+				id: entry.id,
+				title: entry.id === "agent" ? "Agent" : entry.id,
+				available: entry.id !== "tools",
+				visible: entry.visible,
+			})),
 		theme,
 		colorEnabled: false,
 		requestWorkspaceRender: render,
@@ -55,6 +62,21 @@ const text = (component: ReturnType<typeof createSettingsWorkspace>, width = 120
 	component.render(width).join("\n");
 
 describe("Display Settings Workspace", () => {
+	it("edits Sidebar as a draft, preserves unavailable placement, and saves only explicitly", async () => {
+		const h = harness();
+		for (let index = 0; index < 14; index += 1) h.component.handleInput("\u001b[B");
+		expect(text(h.component)).toContain("Sidebar Editor");
+		h.component.handleInput(" ");
+		h.component.handleInput("\u001b[1;2B");
+		expect(text(h.component)).toContain("agent");
+		h.component.handleInput("s");
+		await vi.waitFor(() => expect(h.persist).toHaveBeenCalled());
+		expect(h.persist.mock.calls[0]?.[0]).toEqual(
+			expect.objectContaining({ sidebarPanelLayout: expect.any(Array) }),
+		);
+		expect(h.close).not.toHaveBeenCalled();
+	});
+
 	it("applies a complete preset continuously as one Session mutation and one Undo step", () => {
 		const h = harness();
 		h.component.handleInput(" ");

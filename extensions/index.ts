@@ -19,6 +19,11 @@ import { createFooterComponent, type ThemeLike } from "../src/footer.js";
 import { openAtelierControlCenter, openDisplaySettingsWorkspace } from "../src/menu.js";
 import { createRunActivityTracker, type RunActivityTracker } from "../src/run-activity.js";
 import {
+	BUILTIN_SIDEBAR_PANEL_IDS,
+	createSidebarPanelRegistry,
+	type SidebarPanelRegistry,
+} from "../src/sidebar-panels.js";
+import {
 	buildSidebarSnapshot,
 	createSidebarController,
 	type SidebarController,
@@ -26,6 +31,19 @@ import {
 } from "../src/sidebar.js";
 import { AtelierRuntime } from "../src/state.js";
 import type { AtelierState, FooterState, NormalizedTodo, RpivTask, TodoItem } from "../src/types.js";
+
+export {
+	SIDEBAR_PANEL_EVENT_CHANNEL,
+	createSidebarPanelRegistry,
+	registerSidebarPanel,
+} from "../src/sidebar-panels.js";
+export type {
+	SidebarPanelContribution,
+	SidebarPanelData,
+	SidebarPanelEvent,
+	SidebarPanelEventTransport,
+	SidebarPanelRegistry,
+} from "../src/sidebar-panels.js";
 
 export interface AtelierExtensionDependencies {
 	saveConfig?: typeof saveUserConfig;
@@ -45,6 +63,7 @@ export default function atelierExtension(
 	let currentSessionManager: ExtensionContext["sessionManager"] | undefined;
 	let requestRender: () => void = () => undefined;
 	let sidebar: SidebarController | undefined;
+	let panelRegistry: SidebarPanelRegistry | undefined;
 	let runActivity: RunActivityTracker | undefined;
 	let completionNotifier: CompletionNotifier | undefined;
 	let unsubscribeAskUserBlocked: (() => void) | undefined;
@@ -146,6 +165,7 @@ export default function atelierExtension(
 		ctx: ExtensionContext,
 		targetRuntime: AtelierRuntime,
 		targetRunActivity: RunActivityTracker | undefined,
+		targetPanelRegistry: SidebarPanelRegistry | undefined = panelRegistry,
 	): SidebarSnapshot {
 		const sessionName = ctx.sessionManager.getSessionName();
 		const sessionFile = ctx.sessionManager.getSessionFile();
@@ -162,6 +182,7 @@ export default function atelierExtension(
 			extensionStatuses,
 			...(targetRunActivity ? { runActivity: targetRunActivity.getSnapshot() } : {}),
 			todos: cachedTodos,
+			sidebarPanels: targetPanelRegistry?.getAvailable() ?? [],
 		});
 	}
 
@@ -264,6 +285,29 @@ export default function atelierExtension(
 			ctx,
 			{
 				getConfig: () => targetRuntime.getConfig(),
+				getSidebarPanelLayout: () => {
+					const configured = targetRuntime.getSidebarPanelLayout();
+					const available = new Map((panelRegistry?.getAvailable() ?? []).map((panel) => [panel.id, panel]));
+					const configuredIds = new Set(configured.map((entry) => entry.id));
+					return [
+						...configured.map((entry) => ({
+							id: entry.id,
+							title: available.get(entry.id)?.title ?? entry.id,
+							available:
+								BUILTIN_SIDEBAR_PANEL_IDS.includes(entry.id as (typeof BUILTIN_SIDEBAR_PANEL_IDS)[number]) ||
+								available.has(entry.id),
+							visible: entry.visible,
+						})),
+						...Array.from(available.values())
+							.filter((panel) => !configuredIds.has(panel.id))
+							.map((panel) => ({
+								id: panel.id,
+								title: panel.title,
+								available: true,
+								visible: false,
+							})),
+					];
+				},
 				getDisplaySettings: () => targetRuntime.getDisplaySettings(),
 				getDisplayProvenance: () => targetRuntime.getDisplayProvenance(),
 				getSessionDisplayOverride: () => targetRuntime.getSessionDisplayOverride(),
@@ -395,6 +439,7 @@ export default function atelierExtension(
 
 		let localRuntime: AtelierRuntime | undefined;
 		let localSidebar: SidebarController | undefined;
+		let localPanelRegistry: SidebarPanelRegistry | undefined;
 		let localCompletionNotifier: CompletionNotifier | undefined;
 		const isFresh = (): boolean => initializationGeneration === lifecycleGeneration;
 		const localRunActivity = createRunActivityTracker({
@@ -436,6 +481,13 @@ export default function atelierExtension(
 				},
 			});
 			localRuntime = candidateRuntime;
+			localPanelRegistry = createSidebarPanelRegistry({
+				events: pi.events,
+				instanceId: `atelier-${initializationGeneration}`,
+				onChange: () => {
+					if (isFresh() && panelRegistry === localPanelRegistry) requestAllRenders();
+				},
+			});
 			const candidateCompletionNotifier = createCompletionNotifier({
 				isEnabled: () =>
 					enabled && runtime === candidateRuntime && candidateRuntime.getConfig().completionNotifications,
@@ -449,7 +501,8 @@ export default function atelierExtension(
 			localCompletionNotifier = candidateCompletionNotifier;
 			localSidebar = createSidebarController({
 				ctx: initializationContext,
-				getSnapshot: () => getSidebarSnapshot(initializationContext, candidateRuntime, localRunActivity),
+				getSnapshot: () =>
+					getSidebarSnapshot(initializationContext, candidateRuntime, localRunActivity, localPanelRegistry),
 				getConfig: () => candidateRuntime.getConfig(),
 				colorEnabled: !("NO_COLOR" in process.env),
 				shouldAnimate: () => runActivity?.isRunning() ?? false,
@@ -462,6 +515,7 @@ export default function atelierExtension(
 			});
 			if (!isFresh()) {
 				localSidebar.dispose();
+				localPanelRegistry?.dispose();
 				localRunActivity.reset();
 				candidateCompletionNotifier.reset();
 				candidateRuntime.dispose();
@@ -471,11 +525,13 @@ export default function atelierExtension(
 			const previousSidebar = sidebar;
 			const previousRuntime = runtime;
 			const previousRunActivity = runActivity;
+			const previousPanelRegistry = panelRegistry;
 			const previousCompletionNotifier = completionNotifier;
 			const previousUnsubscribeAskUserBlocked = unsubscribeAskUserBlocked;
 			runtime = candidateRuntime;
 			sidebar = localSidebar;
 			runActivity = localRunActivity;
+			panelRegistry = localPanelRegistry;
 			completionNotifier = candidateCompletionNotifier;
 			currentContext = initializationContext;
 			currentSessionManager = initializationContext.sessionManager;
@@ -501,6 +557,7 @@ export default function atelierExtension(
 			});
 			extensionStatuses = [];
 			previousSidebar?.dispose();
+			previousPanelRegistry?.dispose();
 			previousRuntime?.dispose();
 			previousRunActivity?.reset();
 			previousCompletionNotifier?.reset();
@@ -545,12 +602,15 @@ export default function atelierExtension(
 			void candidateRuntime.refreshWorkspacePulse();
 		} catch (error) {
 			localSidebar?.dispose();
+			localPanelRegistry?.dispose();
 			localRunActivity.reset();
 			localCompletionNotifier?.reset();
 			localRuntime?.dispose();
 			if (!isFresh()) return;
 			sidebar?.dispose();
 			sidebar = undefined;
+			panelRegistry?.dispose();
+			panelRegistry = undefined;
 			runtime?.dispose();
 			runtime = undefined;
 			const previousRunActivity = runActivity;
@@ -640,7 +700,16 @@ export default function atelierExtension(
 		if (ctx.sessionManager === cachedTodosSessionManager) cachedTodos = todoList;
 		const sidebarVisible = current.sidebar?.isVisible() ?? false;
 		if (sidebarVisible) current.sidebar?.requestRender();
-		if (!current.runtime.getConfig().showSidebarTodos || !sidebarVisible || todoList.length === 0) return;
+		const sidebarTodoLayout = current.runtime
+			.getConfig()
+			.sidebarPanelLayout.find((entry) => entry.id === "todos");
+		if (
+			!current.runtime.getConfig().showSidebarTodos ||
+			sidebarTodoLayout?.visible === false ||
+			!sidebarVisible ||
+			todoList.length === 0
+		)
+			return;
 		const done = todoList.filter((t) => t.status === "completed").length;
 		return {
 			content: [{ type: "text", text: `${done}/${todoList.length} done · see sidebar` }],
@@ -672,6 +741,8 @@ export default function atelierExtension(
 		lifecycleGeneration += 1;
 		(current?.sidebar ?? sidebar)?.dispose();
 		sidebar = undefined;
+		panelRegistry?.dispose();
+		panelRegistry = undefined;
 		(current?.runtime ?? runtime)?.dispose();
 		runtime = undefined;
 		const previousRunActivity = current?.runActivity ?? runActivity;

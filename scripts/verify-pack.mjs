@@ -18,6 +18,7 @@ const required = [
 	"src/settings-workspace.ts",
 	"src/palette.ts",
 	"src/run-activity.ts",
+	"src/sidebar-panels.ts",
 	"assets/preview.png",
 	"CHANGELOG.md",
 	"README.md",

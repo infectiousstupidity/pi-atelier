@@ -288,6 +288,7 @@ export async function openDisplaySettingsWorkspace(
 	runtime: Pick<
 		AtelierRuntime,
 		| "getConfig"
+		| "getSidebarPanelLayout"
 		| "getDisplaySettings"
 		| "getDisplayProvenance"
 		| "getSessionDisplayOverride"
@@ -307,6 +308,13 @@ export async function openDisplaySettingsWorkspace(
 		(tui, theme, _keys, done) =>
 			createSettingsWorkspace({
 				getDisplaySettings: () => runtime.getDisplaySettings(),
+				getSidebarPanelLayout: () =>
+					(runtime.getSidebarPanelLayout?.() ?? runtime.getConfig().sidebarPanelLayout).map((entry) => ({
+						id: entry.id,
+						title: entry.id,
+						available: true,
+						visible: entry.visible,
+					})),
 				getDisplayProvenance: () => runtime.getDisplayProvenance(),
 				getSessionDisplayOverride: () => runtime.getSessionDisplayOverride(),
 				replaceSessionDisplayOverride: (value) => runtime.replaceSessionDisplayOverride(value),
@@ -388,9 +396,20 @@ export async function openAtelierControlCenter(
 					await actions.setCompletionNotifications(!runtime.getConfig().completionNotifications);
 				else if (choice === "sidebar-agent") {
 					const next = !runtime.getConfig().showSidebarAgent;
-					runtime.setConfig({ ...runtime.getConfig(), showSidebarAgent: next });
+					const sidebarPanelLayout = runtime
+						.getSidebarPanelLayout?.()
+						.map((entry) => (entry.id === "agent" ? { ...entry, visible: next } : { ...entry }));
+					runtime.setConfig({
+						...runtime.getConfig(),
+						showSidebarAgent: next,
+						...(sidebarPanelLayout ? { sidebarPanelLayout } : {}),
+					});
 					try {
-						await savePatch(userConfigPath, { showSidebarAgent: next });
+						const patch =
+							runtime.getUserSidebarPanelLayoutConfigured?.() && sidebarPanelLayout
+								? { showSidebarAgent: next, sidebarPanelLayout }
+								: { showSidebarAgent: next };
+						await savePatch(userConfigPath, patch);
 						ctx.ui.notify(`Agent panel ${next ? "enabled" : "disabled"}`, "info");
 					} catch (error) {
 						ctx.ui.notify(

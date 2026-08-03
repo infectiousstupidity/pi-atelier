@@ -14,6 +14,22 @@ export type SegmentId =
 	| "statuses"
 	| "menu";
 export type Density = "comfortable" | "compact";
+export type BuiltinSidebarPanelId =
+	| "agent"
+	| "activity"
+	| "alerts"
+	| "todos"
+	| "context"
+	| "workspace"
+	| "usage"
+	| "tools";
+/** Stable namespaced IDs are used by contributed panels. */
+export type SidebarPanelId = BuiltinSidebarPanelId | `${string}:${string}`;
+export interface SidebarPanelLayoutEntry {
+	id: SidebarPanelId;
+	visible: boolean;
+}
+export type SidebarPanelLayout = SidebarPanelLayoutEntry[];
 /** Legacy menu vocabulary. Ornament is translated to Brand visibility. */
 export type Ornament = "none" | "restrained";
 export type ConfigurationSource = "product" | "user" | "project" | "session";
@@ -49,6 +65,7 @@ export interface DisplayPatch {
 	preset?: PresetName;
 	density?: Density;
 	segmentLayout?: SegmentLayout;
+	sidebarPanelLayout?: SidebarPanelLayout;
 }
 
 export interface DisplayProvenance {
@@ -91,6 +108,7 @@ export interface AtelierConfig extends DisplaySettings {
 	showSidebarToolNames: boolean;
 	showSidebarAgent: boolean;
 	showSidebarTodos: boolean;
+	sidebarPanelLayout: SidebarPanelLayout;
 	completionNotifications: boolean;
 }
 
@@ -155,5 +173,15 @@ export const DEFAULT_CONFIG: AtelierConfig = {
 	showSidebarToolNames: false,
 	showSidebarAgent: true,
 	showSidebarTodos: true,
+	sidebarPanelLayout: [
+		{ id: "agent", visible: true },
+		{ id: "activity", visible: true },
+		{ id: "alerts", visible: true },
+		{ id: "todos", visible: true },
+		{ id: "context", visible: true },
+		{ id: "workspace", visible: true },
+		{ id: "usage", visible: true },
+		{ id: "tools", visible: true },
+	],
 	completionNotifications: true,
 };

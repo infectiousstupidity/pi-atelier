@@ -20,6 +20,7 @@ import {
 	type SegmentLayout,
 	type TemplateName,
 } from "./types.js";
+import { DEFAULT_SIDEBAR_PANEL_LAYOUT, normalizeSidebarPanelLayout } from "./sidebar-panels.js";
 
 export interface ConfigLoadResult {
 	config: AtelierConfig;
@@ -35,6 +36,76 @@ export interface LoadConfigOptions {
 	session?: Record<string, unknown> | Partial<AtelierConfig>;
 }
 
+interface SidebarResolution {
+	layout: AtelierConfig["sidebarPanelLayout"];
+	warnings: string[];
+	authoritative: boolean;
+}
+
+function cloneSidebarLayout(
+	layout: AtelierConfig["sidebarPanelLayout"],
+): AtelierConfig["sidebarPanelLayout"] {
+	return layout.map((entry) => ({ ...entry }));
+}
+
+function parseSidebarLayout(
+	value: unknown,
+	warnings: string[],
+): AtelierConfig["sidebarPanelLayout"] | undefined {
+	if (!Array.isArray(value)) {
+		warnings.push("sidebarPanelLayout must be an array");
+		return undefined;
+	}
+	const entries: Array<{ id: (typeof DEFAULT_SIDEBAR_PANEL_LAYOUT)[number]["id"]; visible: boolean }> = [];
+	for (const item of value) {
+		if (!isRecord(item) || typeof item.id !== "string") {
+			warnings.push("Ignoring malformed sidebarPanelLayout entry");
+			continue;
+		}
+		const visible = item.visible;
+		if (typeof visible !== "boolean") {
+			warnings.push(`sidebar panel visibility for ${item.id} must be boolean; using hidden`);
+		}
+		entries.push({
+			id: item.id as (typeof DEFAULT_SIDEBAR_PANEL_LAYOUT)[number]["id"],
+			visible: visible === true,
+		});
+	}
+	return normalizeSidebarPanelLayout(entries, warnings);
+}
+
+function setSidebarVisibility(
+	layout: AtelierConfig["sidebarPanelLayout"],
+	id: "agent" | "todos",
+	visible: boolean,
+): void {
+	const entry = layout.find((item) => item.id === id);
+	if (entry) entry.visible = visible;
+}
+
+function resolveSidebarLayout(layers: DisplayLayerState): SidebarResolution {
+	const warnings: string[] = [];
+	const user = layers.user;
+	if (user && "sidebarPanelLayout" in user) {
+		const parsed = parseSidebarLayout(user.sidebarPanelLayout, warnings);
+		return {
+			layout: parsed ?? cloneSidebarLayout(DEFAULT_SIDEBAR_PANEL_LAYOUT),
+			warnings,
+			authoritative: true,
+		};
+	}
+	const layout = cloneSidebarLayout(DEFAULT_SIDEBAR_PANEL_LAYOUT);
+	// Agent has always been a global user preference. Project/session values are
+	// intentionally ignored even while reading the legacy compatibility key.
+	if (user && typeof user.showSidebarAgent === "boolean")
+		setSidebarVisibility(layout, "agent", user.showSidebarAgent);
+	for (const input of [layers.user, layers.project, layers.session]) {
+		if (input && typeof input.showSidebarTodos === "boolean")
+			setSidebarVisibility(layout, "todos", input.showSidebarTodos);
+	}
+	return { layout, warnings, authoritative: false };
+}
+
 const presets = new Set<PresetName>(["editorial", "minimal", "classic", "custom"]);
 const densities = new Set(["comfortable", "compact"]);
 const ornaments = new Set(["none", "restrained"]);
@@ -46,6 +117,7 @@ const record = (value: unknown): Record<string, unknown> | undefined => (isRecor
 const cloneConfig = (config: AtelierConfig): AtelierConfig => ({
 	...config,
 	segmentLayout: config.segmentLayout.map((entry) => ({ ...entry })),
+	sidebarPanelLayout: cloneSidebarLayout(config.sidebarPanelLayout),
 });
 
 interface CompatibilityState {
@@ -304,10 +376,17 @@ export function validateConfig(input: unknown, base: AtelierConfig = DEFAULT_CON
 	const inputRecord = record(input);
 	const displayLayers: DisplayLayerState = inputRecord ? { user: inputRecord } : {};
 	const resolved = resolveDisplayLayers(displayLayers, base);
-	Object.assign(config, resolved.display);
+	const sidebar = resolveSidebarLayout(displayLayers);
+	Object.assign(config, resolved.display, { sidebarPanelLayout: cloneSidebarLayout(sidebar.layout) });
+	if (sidebar.authoritative) {
+		config.showSidebarAgent =
+			sidebar.layout.find((entry) => entry.id === "agent")?.visible ?? config.showSidebarAgent;
+		config.showSidebarTodos =
+			sidebar.layout.find((entry) => entry.id === "todos")?.visible ?? config.showSidebarTodos;
+	}
 	return {
 		config,
-		warnings: [...new Set([...warnings, ...resolved.warnings])],
+		warnings: [...new Set([...warnings, ...resolved.warnings, ...sidebar.warnings])],
 		displayLayers,
 		displayProvenance: resolved.provenance,
 	};
@@ -324,14 +403,21 @@ export function mergeConfig(...inputs: unknown[]): ConfigLoadResult {
 		...(records[2] ? { session: records[2] } : {}),
 	};
 	const resolved = resolveDisplayLayers(displayLayers);
-	Object.assign(config, resolved.display);
+	const sidebar = resolveSidebarLayout(displayLayers);
+	Object.assign(config, resolved.display, { sidebarPanelLayout: cloneSidebarLayout(sidebar.layout) });
+	if (sidebar.authoritative) {
+		config.showSidebarAgent =
+			sidebar.layout.find((entry) => entry.id === "agent")?.visible ?? config.showSidebarAgent;
+		config.showSidebarTodos =
+			sidebar.layout.find((entry) => entry.id === "todos")?.visible ?? config.showSidebarTodos;
+	}
 	// Agent visibility is intentionally a global user-only preference, matching loadConfig.
 	const global = cloneConfig(DEFAULT_CONFIG);
 	applyNonDisplay(inputs[0], global, []);
-	config.showSidebarAgent = global.showSidebarAgent;
+	if (!sidebar.authoritative) config.showSidebarAgent = global.showSidebarAgent;
 	return {
 		config,
-		warnings: [...new Set([...warnings, ...resolved.warnings])],
+		warnings: [...new Set([...warnings, ...resolved.warnings, ...sidebar.warnings])],
 		displayLayers,
 		displayProvenance: resolved.provenance,
 	};
@@ -363,17 +449,24 @@ export async function loadConfig(options: LoadConfigOptions): Promise<ConfigLoad
 		...(sessionRecord ? { session: sessionRecord } : {}),
 	};
 	const resolved = resolveDisplayLayers(displayLayers);
-	Object.assign(config, resolved.display);
+	const sidebar = resolveSidebarLayout(displayLayers);
+	Object.assign(config, resolved.display, { sidebarPanelLayout: cloneSidebarLayout(sidebar.layout) });
+	if (sidebar.authoritative) {
+		config.showSidebarAgent =
+			sidebar.layout.find((entry) => entry.id === "agent")?.visible ?? config.showSidebarAgent;
+		config.showSidebarTodos =
+			sidebar.layout.find((entry) => entry.id === "todos")?.visible ?? config.showSidebarTodos;
+	}
 	// Completion notifications and Agent visibility are intentionally global-user-only.
 	const global = cloneConfig(DEFAULT_CONFIG);
 	applyNonDisplay(user.value, global, []);
 	config.completionNotifications = global.completionNotifications;
-	config.showSidebarAgent = global.showSidebarAgent;
+	if (!sidebar.authoritative) config.showSidebarAgent = global.showSidebarAgent;
 	return {
 		config,
 		warnings: [
 			...new Set(
-				[user.warning, project.warning, ...warnings, ...resolved.warnings].filter(
+				[user.warning, project.warning, ...warnings, ...resolved.warnings, ...sidebar.warnings].filter(
 					(item): item is string => !!item,
 				),
 			),
