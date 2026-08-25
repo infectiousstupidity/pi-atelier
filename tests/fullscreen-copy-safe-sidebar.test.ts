@@ -1,3 +1,4 @@
+import type { TUI } from "@earendil-works/pi-tui";
 import { ScrollView, TuiAltScreen } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import { createSplitPaneController } from "../src/split-pane.js";
@@ -6,8 +7,29 @@ const press = (x: number, y: number) => `\u001b[<0;${x};${y}M`;
 const motion = (x: number, y: number) => `\u001b[<32;${x};${y}M`;
 const release = (x: number, y: number) => `\u001b[<0;${x};${y}m`;
 
+function stableTuiReference(getRenderer: () => TUI): TUI {
+	return new Proxy({} as TUI, {
+		get: (_target, property) => {
+			const renderer = getRenderer();
+			const value = Reflect.get(renderer, property, renderer);
+			if (typeof value !== "function") return value;
+			return (...args: unknown[]) => {
+				const currentRenderer = getRenderer();
+				const method = Reflect.get(currentRenderer, property, currentRenderer);
+				if (typeof method !== "function") throw new TypeError(`${String(property)} is not callable`);
+				return Reflect.apply(method, currentRenderer, args);
+			};
+		},
+		set: (_target, property, value) => {
+			const renderer = getRenderer();
+			return Reflect.set(renderer, property, value, renderer);
+		},
+		getPrototypeOf: () => Reflect.getPrototypeOf(getRenderer()),
+	}) as TUI;
+}
+
 describe("fullscreen Sidebar selection", () => {
-	it("copies transcript content without Sidebar text", () => {
+	it("copies transcript content without Sidebar text through Pi's stable TUI reference", () => {
 		let deliverInput: ((data: string) => void) | undefined;
 		const write = vi.fn();
 		const terminal = {
@@ -22,6 +44,7 @@ describe("fullscreen Sidebar selection", () => {
 			showCursor: vi.fn(),
 		};
 		const renderer = new TuiAltScreen(terminal as never);
+		const tui = stableTuiReference(() => renderer);
 		const transcript = new ScrollView(
 			{
 				render: () => ["alpha", "beta", "gamma"],
@@ -33,9 +56,9 @@ describe("fullscreen Sidebar selection", () => {
 		renderer.start();
 
 		const split = createSplitPaneController();
-		split.attach(renderer);
+		split.attach(tui);
 		split.show();
-		const overlayHandle = renderer.showOverlay(
+		const overlayHandle = tui.showOverlay(
 			{
 				render: () => ["SIDEBAR", "TOKEN BURDEN"],
 				invalidate() {},
@@ -46,8 +69,8 @@ describe("fullscreen Sidebar selection", () => {
 
 		// The Sidebar is visibly part of the HStack, but its lifecycle overlay is
 		// non-visible so Pi can bind text selection to the transcript ScrollView.
-		expect(renderer.render(120).join("\n")).toContain("SIDEBAR");
-		expect(renderer.hasOverlay()).toBe(false);
+		expect(tui.render(120).join("\n")).toContain("SIDEBAR");
+		expect(tui.hasOverlay()).toBe(false);
 
 		deliverInput?.(press(1, 1));
 		deliverInput?.(motion(4, 2));
