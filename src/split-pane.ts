@@ -1,10 +1,9 @@
-import type { Component, OverlayOptions, TUI } from "@earendil-works/pi-tui";
-import { HStack, matchesKey } from "@earendil-works/pi-tui";
+import type { Component, OverlayHandle, OverlayOptions, TUI } from "@earendil-works/pi-tui";
+import { HStack, isViewportTUI, matchesKey } from "@earendil-works/pi-tui";
 
 const ENABLE_MOUSE = "\u001b[?1002h\u001b[?1006h";
 const DISABLE_MOUSE = "\u001b[?1006l\u001b[?1002l";
 const SGR_MOUSE = /^\u001b\[<(\d+);(\d+);(\d+)([Mm])$/;
-const VIEWPORT_TUI = Symbol.for("@earendil-works/pi-tui/viewport");
 const PI_084_REGULAR_RENDER_ADAPTER = Symbol("pi-atelier.regular-render-adapter");
 const PI_084_FULLSCREEN_LAYOUT_ADAPTER = Symbol("pi-atelier.fullscreen-layout-adapter");
 const PI_084_FULLSCREEN_OVERLAY_ADAPTER = Symbol("pi-atelier.fullscreen-overlay-adapter");
@@ -25,15 +24,15 @@ interface FullscreenLayoutAdapterState {
 interface FullscreenOverlayAdapterState {
 	owner: object;
 	baseShowOverlay: TUI["showOverlay"];
+	baseHideOverlay: TUI["hideOverlay"];
 }
 
 type AdaptedTui = TUI & {
-	readonly [VIEWPORT_TUI]?: true;
 	[PI_084_REGULAR_RENDER_ADAPTER]: RegularRenderAdapterState | undefined;
 	[PI_084_FULLSCREEN_LAYOUT_ADAPTER]: FullscreenLayoutAdapterState | undefined;
 	[PI_084_FULLSCREEN_OVERLAY_ADAPTER]: FullscreenOverlayAdapterState | undefined;
 	layoutRoot?: Component;
-	setLayoutRoot?(component: Component | undefined): void;
+	setLayoutRoot(component: Component | undefined): void;
 };
 
 export interface SgrMouseEvent {
@@ -122,6 +121,7 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 	let unsubscribeInput: (() => void) | undefined;
 	let resizeMouseTerminal: TUI["terminal"] | undefined;
 	let fullscreenSidebarComponent: Component | undefined;
+	let fullscreenSidebarHidden = false;
 	let controller: SplitPaneController;
 	const adapterOwner = {};
 
@@ -138,21 +138,25 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 		return undefined;
 	};
 
-	const findPrototypeShowOverlay = (nextTui: TUI): TUI["showOverlay"] | undefined => {
+	const findPrototypeOverlayMethods = (
+		nextTui: TUI,
+	): { showOverlay: TUI["showOverlay"]; hideOverlay: TUI["hideOverlay"] } | undefined => {
 		let prototype = Object.getPrototypeOf(nextTui) as object | null;
-		while (prototype) {
-			const descriptor = Object.getOwnPropertyDescriptor(prototype, "showOverlay");
-			if (typeof descriptor?.value === "function") return descriptor.value as TUI["showOverlay"];
+		let showOverlay: TUI["showOverlay"] | undefined;
+		let hideOverlay: TUI["hideOverlay"] | undefined;
+		while (prototype && (!showOverlay || !hideOverlay)) {
+			const showDescriptor = Object.getOwnPropertyDescriptor(prototype, "showOverlay");
+			if (typeof showDescriptor?.value === "function")
+				showOverlay = showDescriptor.value as TUI["showOverlay"];
+			const hideDescriptor = Object.getOwnPropertyDescriptor(prototype, "hideOverlay");
+			if (typeof hideDescriptor?.value === "function")
+				hideOverlay = hideDescriptor.value as TUI["hideOverlay"];
 			prototype = Object.getPrototypeOf(prototype) as object | null;
 		}
-		return undefined;
+		return showOverlay && hideOverlay ? { showOverlay, hideOverlay } : undefined;
 	};
 
-	const isPiFullscreenRenderer = (): boolean => {
-		if (!tui || tui.mode !== "fullscreen") return false;
-		const adaptedTui = tui as AdaptedTui;
-		return adaptedTui[VIEWPORT_TUI] === true && typeof adaptedTui.setLayoutRoot === "function";
-	};
+	const isPiFullscreenRenderer = (): boolean => tui?.mode === "fullscreen" && isViewportTUI(tui);
 
 	const syncRegularRenderAdapter = () => {
 		if (!tui || tui.mode !== "regular") return;
@@ -192,7 +196,7 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 				visible: ({ width }) => {
 					reconcileResizeWidth(width);
 					syncOverlayWidth(width);
-					return visibleAt(width);
+					return !fullscreenSidebarHidden && visibleAt(width);
 				},
 			},
 		]);
@@ -211,7 +215,7 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 				return;
 			}
 			const splitRoot = createFullscreenSplitRoot(currentState.originalRoot);
-			adaptedTui.setLayoutRoot?.(splitRoot);
+			adaptedTui.setLayoutRoot(splitRoot);
 			currentState.splitRoot = splitRoot;
 			currentState.sidebarWidth = sidebarWidth;
 			currentState.sidebarComponent = fullscreenSidebarComponent;
@@ -219,7 +223,7 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 		}
 		if (!currentRoot) return;
 		const splitRoot = createFullscreenSplitRoot(currentRoot);
-		adaptedTui.setLayoutRoot?.(splitRoot);
+		adaptedTui.setLayoutRoot(splitRoot);
 		adaptedTui[PI_084_FULLSCREEN_LAYOUT_ADAPTER] = {
 			owner: adapterOwner,
 			originalRoot: currentRoot,
@@ -235,7 +239,7 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 		const currentState = adaptedTui[PI_084_FULLSCREEN_LAYOUT_ADAPTER];
 		if (currentState?.owner !== adapterOwner) return;
 		if (adaptedTui.layoutRoot === currentState.splitRoot) {
-			adaptedTui.setLayoutRoot?.(currentState.originalRoot);
+			adaptedTui.setLayoutRoot(currentState.originalRoot);
 		}
 		adaptedTui[PI_084_FULLSCREEN_LAYOUT_ADAPTER] = undefined;
 	};
@@ -246,23 +250,70 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 		const currentState = adaptedTui[PI_084_FULLSCREEN_OVERLAY_ADAPTER];
 		if (currentState?.owner === adapterOwner) return;
 		if (currentState) return;
-		const baseShowOverlay = findPrototypeShowOverlay(tui);
-		if (!baseShowOverlay) return;
-		adaptedTui[PI_084_FULLSCREEN_OVERLAY_ADAPTER] = { owner: adapterOwner, baseShowOverlay };
+		const baseMethods = findPrototypeOverlayMethods(tui);
+		if (!baseMethods) return;
+		const { showOverlay: baseShowOverlay, hideOverlay: baseHideOverlay } = baseMethods;
+		adaptedTui[PI_084_FULLSCREEN_OVERLAY_ADAPTER] = {
+			owner: adapterOwner,
+			baseShowOverlay,
+			baseHideOverlay,
+		};
 		adaptedTui.showOverlay = (component, overlayOptions) => {
 			const state = adaptedTui[PI_084_FULLSCREEN_OVERLAY_ADAPTER];
 			const base = state?.owner === adapterOwner ? state.baseShowOverlay : baseShowOverlay;
 			if (enabled && overlayOptions === overlayLayout && isPiFullscreenRenderer()) {
 				fullscreenSidebarComponent = component;
+				fullscreenSidebarHidden = false;
 				syncFullscreenLayoutAdapter();
 				// ctx.ui.custom() only exposes persistent UI as an overlay. Keep a
 				// non-visible overlay entry for its lifecycle promise, while the
 				// actual Sidebar is rendered by the fullscreen HStack. Pi therefore
 				// sees no visible overlay and can scope selection to the transcript
 				// ScrollView instead of the composed terminal screen.
-				return Reflect.apply(base, tui, [component, { ...overlayOptions, visible: () => false }]);
+				const handle = Reflect.apply(base, tui, [
+					component,
+					{ ...overlayOptions, visible: () => false },
+				]) as OverlayHandle;
+				return {
+					hide() {
+						try {
+							handle.hide();
+						} finally {
+							if (fullscreenSidebarComponent === component) {
+								enabled = false;
+								fullscreenSidebarComponent = undefined;
+								syncFullscreenLayoutAdapter();
+								tui?.requestRender();
+							}
+						}
+					},
+					setHidden(hidden) {
+						handle.setHidden(hidden);
+						if (fullscreenSidebarComponent === component) {
+							fullscreenSidebarHidden = hidden;
+							tui?.requestRender();
+						}
+					},
+					isHidden: () => handle.isHidden(),
+					focus: () => handle.focus(),
+					unfocus: (options) => handle.unfocus(options),
+					isFocused: () => handle.isFocused(),
+				};
 			}
 			return Reflect.apply(base, tui, [component, overlayOptions]);
+		};
+		adaptedTui.hideOverlay = () => {
+			const state = adaptedTui[PI_084_FULLSCREEN_OVERLAY_ADAPTER];
+			const base = state?.owner === adapterOwner ? state.baseHideOverlay : baseHideOverlay;
+			const hadVisibleOverlay = tui?.hasOverlay() ?? false;
+			Reflect.apply(base, tui, []);
+			if (!hadVisibleOverlay && fullscreenSidebarComponent) {
+				enabled = false;
+				fullscreenSidebarComponent = undefined;
+				fullscreenSidebarHidden = false;
+				syncFullscreenLayoutAdapter();
+				tui?.requestRender();
+			}
 		};
 	};
 
@@ -272,6 +323,7 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 		const currentState = adaptedTui[PI_084_FULLSCREEN_OVERLAY_ADAPTER];
 		if (currentState?.owner !== adapterOwner) return;
 		adaptedTui.showOverlay = currentState.baseShowOverlay;
+		adaptedTui.hideOverlay = currentState.baseHideOverlay;
 		adaptedTui[PI_084_FULLSCREEN_OVERLAY_ADAPTER] = undefined;
 	};
 
@@ -439,6 +491,7 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 			if (!enabled) return;
 			enabled = false;
 			fullscreenSidebarComponent = undefined;
+			fullscreenSidebarHidden = false;
 			syncFullscreenLayoutAdapter();
 			requestRender();
 		},
@@ -498,6 +551,7 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 			disposed = true;
 			enabled = false;
 			fullscreenSidebarComponent = undefined;
+			fullscreenSidebarHidden = false;
 			restoreRegularRenderAdapter();
 			restoreFullscreenOverlayAdapter();
 			restoreFullscreenLayoutAdapter();

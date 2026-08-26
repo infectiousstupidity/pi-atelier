@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Render the fullscreen Sidebar inside Pi's split layout instead of as a visible overlay so transcript selection and copy exclude Sidebar content.
+- Render the fullscreen Sidebar inside Pi's split layout instead of as a visible overlay so transcript selection and copy exclude Sidebar content; this now requires Pi 0.84.0 or newer.
 - Wait to run Workspace Pulse Git inspections until Pi considers the project trusted.
 
 ## 0.8.2 — 2026-08-19

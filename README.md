@@ -18,7 +18,7 @@ A responsive status rail and activity sidebar for [Pi](https://pi.dev).
 
 ## Requirements
 
-- Pi 0.80.7 or newer
+- Pi 0.84.0 or newer
 - Node.js 22.19.0 or newer
 - Interactive TUI mode
 
