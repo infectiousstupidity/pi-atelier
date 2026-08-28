@@ -2,7 +2,7 @@
 
 A responsive status rail and activity sidebar for [Pi](https://pi.dev).
 
-[![Pi Atelier demo](https://raw.githubusercontent.com/michaelmjhhhh/pi-atelier/main/docs/demo.png)](https://github.com/michaelmjhhhh/pi-atelier/releases/download/v0.10.0/demo.mp4)
+[![Pi Atelier demo](https://raw.githubusercontent.com/michaelmjhhhh/pi-atelier/main/docs/demo.png?v=0.10.0)](https://github.com/michaelmjhhhh/pi-atelier/releases/download/v0.10.0/demo.mp4)
 
 [Watch the demo](https://github.com/michaelmjhhhh/pi-atelier/releases/download/v0.10.0/demo.mp4)
 
