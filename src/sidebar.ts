@@ -165,11 +165,11 @@ function renderDock(
 	const safeHeight = Math.max(0, Math.trunc(height));
 	if (safeWidth <= 0 || safeHeight <= 0) return [];
 	const contentWidth = Math.max(0, safeWidth - 2);
-	const divider = palette.paint(resizing ? "warning" : "dim", "│");
+	const edge = resizing ? `${palette.paint("warning", "│")} ` : "  ";
 	return Array.from({ length: safeHeight }, (_, index) => {
 		const content = truncateToWidth(rows[index] ?? "", contentWidth, "");
 		const padding = " ".repeat(Math.max(0, contentWidth - visibleWidth(content)));
-		return truncateToWidth(`${divider} ${content}${padding}`, safeWidth, "");
+		return truncateToWidth(`${edge}${content}${padding}`, safeWidth, "");
 	});
 }
 

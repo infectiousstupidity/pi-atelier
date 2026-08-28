@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Keep the Sidebar calm during an active Turn: Activity shows current work instead of a tool log, extra live tools fold into one row, and TODOS lists only the in-progress task.
+- Drop the idle full-height dock rule so the split meets the rounded panels cleanly; the warning divider appears only while resizing.
 
 ## 0.9.0 — 2026-08-28
 

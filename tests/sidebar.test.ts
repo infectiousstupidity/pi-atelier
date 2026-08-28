@@ -964,7 +964,8 @@ describe("sidebar snapshot and layout", () => {
 		const text = lines.join("\n");
 		expect(lines).toHaveLength(36);
 		expect(lines.every((line) => visibleWidth(line) <= 44)).toBe(true);
-		expect(lines.every((line) => stripAnsi(line).startsWith("│ "))).toBe(true);
+		expect(lines.every((line) => stripAnsi(line).startsWith("  "))).toBe(true);
+		expect(lines.every((line) => !stripAnsi(line).startsWith("│ "))).toBe(true);
 		expect(text).toContain("╭─ ✦ AGENT ");
 		expect(text).toContain("╭─ ✦ CONTEXT ");
 		expect(text).toContain("╰────────────────");
@@ -2057,7 +2058,7 @@ describe("sidebar component and overlay", () => {
 			});
 			const lines = component.render(24);
 			expect(lines).toHaveLength(7);
-			expect(lines.every((line) => stripAnsi(line).startsWith("│ "))).toBe(true);
+			expect(lines.every((line) => stripAnsi(line).startsWith("  "))).toBe(true);
 			expect(contentRows(lines)[0]).toBe("Sidebar unavailable");
 			expect(lines.join("\n")).not.toMatch(/PI ATELIER|ATELIER/);
 			expect(lines.join("\n")).not.toContain("esc/q close");
