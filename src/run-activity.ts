@@ -45,7 +45,6 @@ export interface RunActivityTracker {
 	startRun(now?: number): void;
 	startTurn(turnIndex: number): void;
 	startResponse(now?: number): void;
-	recordFirstToken(now?: number): void;
 	updateResponseEstimate(estimatedOutputTokens: number, now?: number): void;
 	finishResponse(outputTokens: number, now?: number): void;
 	startTool(event: ToolExecutionStartEvent, now?: number): void;
@@ -190,15 +189,6 @@ class DefaultRunActivityTracker implements RunActivityTracker {
 		this.requestStartedAt = normalizeTimestamp(now ?? Date.now());
 		this.firstTokenAt = undefined;
 		this.performance = undefined;
-		this.notify();
-	}
-
-	recordFirstToken(now?: number): void {
-		if (this.requestStartedAt === undefined || this.firstTokenAt !== undefined) return;
-		this.firstTokenAt = normalizeTimestamp(now ?? Date.now());
-		this.performance = freezePerformance({
-			ttftMs: Math.max(0, this.firstTokenAt - this.requestStartedAt),
-		});
 		this.notify();
 	}
 

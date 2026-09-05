@@ -19,9 +19,7 @@ import { derivePresetIdentity } from "../src/display.js";
 import {
 	createMenuActions,
 	openAtelierControlCenter,
-	openAtelierMenu,
 	openDisplaySettingsWorkspace,
-	renderMenuBorder,
 	renderMenuFrame,
 	type SidebarControls,
 } from "../src/menu.js";
@@ -84,17 +82,9 @@ function harness() {
 		ui: { notify: vi.fn(), input: vi.fn(), confirm: vi.fn(), custom: vi.fn() },
 		compact: vi.fn(),
 	};
-	const save = vi.fn().mockResolvedValue(undefined);
 	const savePatch = vi.fn().mockResolvedValue(undefined);
-	const actions = createMenuActions(
-		pi as never,
-		ctx as never,
-		runtime as never,
-		"/tmp/user.json",
-		save,
-		savePatch,
-	);
-	return { actions, pi, ctx, runtime, save, savePatch };
+	const actions = createMenuActions(pi as never, ctx as never, runtime as never, "/tmp/user.json", savePatch);
+	return { actions, pi, ctx, runtime, savePatch };
 }
 
 describe("Control Center presentation", () => {
@@ -139,7 +129,7 @@ describe("Control Center presentation", () => {
 			isToolListExpanded: vi.fn(() => false),
 			toggleToolList: vi.fn().mockResolvedValue(undefined),
 		};
-		await openAtelierMenu(
+		await openAtelierControlCenter(
 			{} as never,
 			contextWithSelections(["close"]) as never,
 			harness().runtime as never,
@@ -170,7 +160,7 @@ describe("Control Center presentation", () => {
 			isToolListExpanded: vi.fn(() => false),
 			toggleToolList: vi.fn().mockResolvedValue(undefined),
 		};
-		await openAtelierMenu(
+		await openAtelierControlCenter(
 			{} as never,
 			contextWithSelections([category, "back", "close"]) as never,
 			harness().runtime as never,
@@ -227,7 +217,7 @@ describe("Control Center presentation", () => {
 		expect(getDisplaySettings).not.toHaveBeenCalled();
 	});
 
-	it("preserves legacy positional Display workspace callbacks", async () => {
+	it("persists Display workspace changes through the active callbacks", async () => {
 		const h = harness();
 		const components: any[] = [];
 		const ctx = contextWithSelections([], { columns: 140, rows: 42 }, components);
@@ -251,7 +241,7 @@ describe("Control Center presentation", () => {
 		);
 	});
 
-	it("preserves legacy positional Control Center callbacks", async () => {
+	it("propagates Control Center renders through the active callbacks", async () => {
 		rootMenuItems.length = 0;
 		const h = harness();
 		const components: any[] = [];
@@ -378,7 +368,7 @@ describe("Control Center presentation", () => {
 			isToolListExpanded: vi.fn(() => false),
 			toggleToolList: vi.fn().mockResolvedValue(undefined),
 		};
-		await openAtelierMenu(
+		await openAtelierControlCenter(
 			{
 				getThinkingLevel: vi.fn().mockReturnValue("medium"),
 				getActiveTools: vi.fn().mockReturnValue([]),
@@ -389,12 +379,6 @@ describe("Control Center presentation", () => {
 			sidebar,
 		);
 		expect(sidebar.toggle).toHaveBeenCalledOnce();
-	});
-
-	it("uses a heavy theme-aware border that fills the available width", () => {
-		const theme = { fg: vi.fn((_color: string, text: string) => text), bold: vi.fn((text: string) => text) };
-		expect(renderMenuBorder(theme, 6)).toBe("━━━━━━");
-		expect(theme.fg).toHaveBeenCalledWith("borderAccent", "━━━━━━");
 	});
 
 	it("frames every content row with heavy vertical borders and corners", () => {
@@ -459,7 +443,6 @@ describe("menu actions", () => {
 			h.ctx as never,
 			h.runtime as never,
 			"/tmp/user.json",
-			h.save,
 			h.savePatch,
 			{
 				lifetime: {
@@ -509,17 +492,14 @@ describe("menu actions", () => {
 		await h.actions.setCompletionNotifications(false);
 		expect(h.runtime.getConfig().completionNotifications).toBe(false);
 		expect(h.savePatch).toHaveBeenCalledWith("/tmp/user.json", { completionNotifications: false });
-		expect(h.save).not.toHaveBeenCalled();
 		expect(h.ctx.ui.notify).toHaveBeenCalledWith("Completion notifications disabled", "info");
 	});
 
 	it("persists display changes only after explicit save", async () => {
 		const h = harness();
 		h.actions.setPreset("minimal");
-		expect(h.save).not.toHaveBeenCalled();
 		await h.actions.saveDisplayDefaults();
 		expect(h.savePatch).toHaveBeenCalledWith("/tmp/user.json", h.runtime.getDisplaySettings());
-		expect(h.save).not.toHaveBeenCalled();
 	});
 
 	it("restores the ornament-free Status Rail defaults when selecting editorial", () => {

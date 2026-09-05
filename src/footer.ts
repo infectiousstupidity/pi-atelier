@@ -11,8 +11,6 @@ export interface ThemeLike {
 	italic(text: string): string;
 }
 
-export type ResponsiveMode = "gallery" | "balanced" | "focus" | "telemetry" | "safe";
-
 const WORKING_DOT_FRAMES = ["...", "..", "."] as const;
 const WORKING_ANIMATION_INTERVAL_MS = 400;
 
@@ -62,14 +60,6 @@ const sanitize = (text: string): string =>
 		.replace(/[\u0000-\u001f\u007f]/g, " ")
 		.replace(/\s+/g, " ")
 		.trim();
-
-export function selectResponsiveMode(width: number): ResponsiveMode {
-	if (width >= 132) return "gallery";
-	if (width >= 96) return "balanced";
-	if (width >= 72) return "focus";
-	if (width >= 56) return "telemetry";
-	return "safe";
-}
 
 function paintValue(value: DisplayValue, role: PaletteRole, palette: AtelierPalette): string {
 	return palette.paint(value.available ? role : "dim", value.text);

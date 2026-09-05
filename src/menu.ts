@@ -14,7 +14,7 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import { saveUserConfig, saveUserConfigPatch } from "./config.js";
+import { saveUserConfigPatch } from "./config.js";
 import {
 	DISPLAY_SETTINGS_OVERLAY_MARGIN,
 	DISPLAY_SETTINGS_OVERLAY_MAX_HEIGHT,
@@ -34,16 +34,13 @@ import type { AtelierRuntime } from "./state.js";
 import type { AtelierConfig, Ornament, SegmentId, TemplateName } from "./types.js";
 
 export type { OverlayLifetime } from "./overlay-lifecycle.js";
-export type SaveConfig = typeof saveUserConfig;
 export type SaveConfigPatch = typeof saveUserConfigPatch;
 
 export interface DisplaySettingsWorkspaceOptions {
-	/** Lifecycle options are intentionally trailing so the legacy callback positions stay unambiguous. */
 	lifetime?: OverlayLifetime;
 }
 
 export interface ControlCenterOptions extends DisplaySettingsWorkspaceOptions {}
-/** Lifecycle options are trailing so legacy action callback positions remain source-compatible. */
 export interface MenuActionsOptions extends DisplaySettingsWorkspaceOptions {}
 
 function isOverlayLifetimeActive(lifetime: OverlayLifetime | undefined): boolean {
@@ -114,12 +111,11 @@ interface MenuTheme {
 	bold(text: string): string;
 }
 
-export function renderMenuBorder(theme: MenuTheme, width: number): string {
-	return theme.bold(theme.fg("borderAccent", "━".repeat(Math.max(1, width))));
-}
-
 export function renderMenuFrame(theme: MenuTheme, lines: string[], width: number): string[] {
-	if (width <= 1) return [truncateToWidth(renderMenuBorder(theme, 1), Math.max(0, width), "")];
+	if (width <= 1) {
+		const border = theme.bold(theme.fg("borderAccent", "━"));
+		return [truncateToWidth(border, Math.max(0, width), "")];
+	}
 	const innerWidth = width - 2;
 	const border = (text: string) => theme.bold(theme.fg("borderAccent", text));
 	const framed = lines.map((line) => {
@@ -138,7 +134,6 @@ export function createMenuActions(
 		"getConfig" | "setConfig" | "getDisplaySettings" | "setSessionDisplayPatch" | "refreshUsage"
 	>,
 	userConfigPath: string,
-	_save: SaveConfig = saveUserConfig,
 	savePatch: SaveConfigPatch = saveUserConfigPatch,
 	options: MenuActionsOptions = {},
 ) {
@@ -630,7 +625,6 @@ export async function openAtelierControlCenter(
 		ctx,
 		runtime,
 		userConfigPath,
-		saveUserConfig,
 		savePatch,
 		lifetime ? { lifetime } : {},
 	);
@@ -826,17 +820,4 @@ export async function openAtelierControlCenter(
 			}
 		}
 	}
-}
-
-/** @deprecated Use openAtelierControlCenter. */
-export async function openAtelierMenu(
-	pi: ExtensionAPI,
-	ctx: ExtensionContext,
-	runtime: AtelierRuntime,
-	userConfigPath: string,
-	sidebar: SidebarControls,
-	_save: SaveConfig = saveUserConfig,
-	savePatch: SaveConfigPatch = saveUserConfigPatch,
-): Promise<void> {
-	await openAtelierControlCenter(pi, ctx, runtime, userConfigPath, sidebar, () => undefined, savePatch);
 }
