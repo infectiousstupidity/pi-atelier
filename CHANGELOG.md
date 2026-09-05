@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.10.1 — 2026-09-04
+
+- Remove unused internal formatters, configuration helpers, preview hooks, and legacy menu interfaces without changing the active UI or persisted configuration formats.
+- Simplify Sidebar panel identity and share TODO detail extraction across live updates and session reconstruction.
+- Replace redundant tests with active-path coverage, including concrete split-pane renderer installation and restoration.
+
 ## 0.10.0 — 2026-08-28
 
 - Keep the Sidebar calm during an active Turn: Activity shows current work instead of a tool log, extra live tools fold into one row, and TODOS lists only the in-progress task.
